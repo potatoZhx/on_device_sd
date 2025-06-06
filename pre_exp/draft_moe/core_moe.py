@@ -282,7 +282,7 @@ class CoreMoE:
             inps = layer.input_layernorm(inps)
             inps, self_attn_weights, present_key_value = layer.self_attn(
                 inps,
-                position_ids=position_ids,
+                position_ids=decode_position_ids,
                 past_key_value=self.past_key_value,
                 use_cache=True,
                 attention_mask = _prepare_4d_causal_attention_mask(
