@@ -4,3 +4,9 @@
 # macOS
 .DS_Store
 **/.DS_Store
+
+# Python
+*.pyc
+__pycache__/
+*.pyo
+*.pyd

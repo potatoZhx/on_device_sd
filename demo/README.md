@@ -1,0 +1,1 @@
+/zx_data1/models/Qwen--Qwen3-30B-A3B-Base

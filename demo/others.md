@@ -110,3 +110,36 @@ This design provides a comprehensive, extensible system for CPU-GPU heterogeneou
 ✅ Production-ready features (metrics, logging, configuration)
 ✅ Clear extension points for future improvements
 The system balances performance (async transfers, caching, prefetching) with maintainability (modular design, extensive documentation) and flexibility (strategy pattern, configuration-driven).
+
+
+
+# Performance Tuning Guide
+
+# For Maximum Throughput (Speculative Mode):
+expert_cache_size_gb: 24.0  # Larger cache
+draft_scheduler: "adaptive"
+acceptance_threshold: 0.6    # Lower threshold = more drafts accepted
+max_draft_tokens: 12         # More tokens per draft
+max_batch_size: 64          # Larger batches
+
+# For Minimum Latency (Standard Mode):
+expert_cache_size_gb: 16.0
+max_batch_size: 8           # Smaller batches
+prefetch_strategy: "history_based"  # Better predictions
+max_concurrent_transfers: 8  # More parallel transfers
+
+# For Memory-Constrained Environments:
+expert_cache_size_gb: 4.0   # Smaller cache
+max_batch_size: 4           # Smaller batches
+cache_strategy: "adaptive"   # Better cache utilization
+pin_shared_experts: false   # More flexible cache
+
+# For Quality-Critical Applications:
+default_mode: "standard"    # Use standard mode
+acceptance_threshold: 0.9   # Very conservative
+verify_threshold_perplexity: 1.2  # Tight perplexity control
+
+# For Development/Testing:
+log_level: "DEBUG"
+enable_profiling: true
+max_batch_size: 2

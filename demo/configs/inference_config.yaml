@@ -1,4 +1,4 @@
-# Runtime Inference Configuration
+# Runtime Inference Configuration (Extended)
 
 # Cache settings
 expert_cache_size_gb: 16.0
@@ -10,13 +10,21 @@ prefetch_strategy: "simple"  # "simple" or "history_based"
 num_experts_to_prefetch: 4
 max_concurrent_transfers: 4
 
-# Draft-verify
+# Draft-verify (for speculative mode)
 draft_scheduler: "simple"  # "simple" or "adaptive"
 acceptance_strategy: "standard"  # "standard" or "adaptive"
 acceptance_threshold: 0.7
 
 # Cache replacement
 cache_strategy: "lru"  # "lru", "lfu", "adaptive", "predictive"
+
+# Batch processing
+max_batch_size: 32
+max_waiting_time_ms: 100.0
+enable_dynamic_batching: true
+
+# Inference mode
+default_mode: "standard"  # "standard" or "speculative"
 
 # Performance
 enable_profiling: false
