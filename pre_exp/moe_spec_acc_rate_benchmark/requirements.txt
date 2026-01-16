@@ -1,0 +1,6 @@
+torch>=2.1.1
+transformers>=4.37.1
+fschat>=0.2.31
+accelerate>=0.21.0
+numpy>=1.21.0
+tqdm>=4.64.0

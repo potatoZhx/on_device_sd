@@ -1,0 +1,23 @@
+# Runtime Inference Configuration
+
+# Cache settings
+expert_cache_size_gb: 16.0
+expert_size_mb: 100.0
+pin_shared_experts: true
+
+# Prefetching
+prefetch_strategy: "simple"  # "simple" or "history_based"
+num_experts_to_prefetch: 4
+max_concurrent_transfers: 4
+
+# Draft-verify
+draft_scheduler: "simple"  # "simple" or "adaptive"
+acceptance_strategy: "standard"  # "standard" or "adaptive"
+acceptance_threshold: 0.7
+
+# Cache replacement
+cache_strategy: "lru"  # "lru", "lfu", "adaptive", "predictive"
+
+# Performance
+enable_profiling: false
+log_level: "INFO"
