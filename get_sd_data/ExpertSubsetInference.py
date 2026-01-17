@@ -6,20 +6,28 @@ import torch.nn.functional as F
 # 1. 基类
 # ==========================================
 class BaseExpertSubsetBlockWrapper(nn.Module):
-    def __init__(self, original_block, use_top_m, mode="remove", p_threshold=0.9):
+    def __init__(self, original_block, use_top_m, mode="remove", p_threshold=0.9, replace_count=None):
         super().__init__()
         self.original_block = original_block
         self.use_top_m = use_top_m
         self.mode = mode
         self.p_threshold = p_threshold
+        self.replace_count = replace_count # New parameter for controlling replacement count
         
-        self.num_experts = getattr(original_block, "num_experts", 
-                                  getattr(original_block.config, "n_routed_experts", None))
-        self.top_k = getattr(original_block, "top_k", 
-                               getattr(original_block.config, "num_experts_per_tok", None))
+        self.num_experts = getattr(original_block, "num_experts", None)
+        if self.num_experts is None:
+            config = getattr(original_block, "config", None)
+            if config:
+                self.num_experts = getattr(config, "n_routed_experts", None)
+        
+        self.top_k = getattr(original_block, "top_k", None)
+        if self.top_k is None:
+            config = getattr(original_block, "config", None)
+            if config:
+                self.top_k = getattr(config, "num_experts_per_tok", None)
         
         self.last_metadata = {
-            "dynamic_m": [],
+            # "dynamic_m": [],
             "original_ids": [],
             "modified_ids": [],
             "weights": []
@@ -37,7 +45,7 @@ class BaseExpertSubsetBlockWrapper(nn.Module):
         
         sorted_probs, sorted_indices = torch.sort(all_probs, descending=True, dim=-1)
         new_indices = topk_indices.clone()
-        dynamic_m_list = []
+        # dynamic_m_list = []
 
         # --- 计算 Top-P 截止位 m_idx ---
         cum_probs = torch.cumsum(sorted_probs, dim=-1)
@@ -45,13 +53,13 @@ class BaseExpertSubsetBlockWrapper(nn.Module):
         # === 模式处理逻辑 ===
         if self.mode == "standard":
             self.last_metadata = {
-                "dynamic_m": [top_k] * batch_size,
+                # "dynamic_m": [top_k] * batch_size,
                 "original_ids": topk_indices.detach().cpu().tolist(),
                 "original_weights": original_weights_normalized.detach().cpu().tolist(),
             }
             return original_weights_normalized, topk_indices
 
-        # 统一处理三种 TopP 相关的随机替换模式
+        # 统一处理三种 TopP 相关的随机替换模式，以及通用的 replace_with_topp 模式
         if self.mode in ["replace_with_topp", "replace_last_two_with_topp", "replace_last_one_with_topp"]:
             
             for b in range(batch_size):
@@ -59,21 +67,33 @@ class BaseExpertSubsetBlockWrapper(nn.Module):
                 cutoff_mask = cum_probs[b] >= self.p_threshold
                 m_idx = (cutoff_mask.nonzero(as_tuple=True)[0][0]).item() + 1 if cutoff_mask.any() else num_experts
                 
-                # 根据不同模式确定替换的起始位置和数量
-                if self.mode == "replace_last_two_with_topp":
-                    num_to_replace = 2
-                    start_replace_idx = top_k - 2
-                elif self.mode == "replace_last_one_with_topp":
-                    num_to_replace = 1
-                    start_replace_idx = top_k - 1
-                else: # 原始模式：从 use_top_m 开始替换
-                    num_to_replace = top_k - self.use_top_m
-                    start_replace_idx = self.use_top_m
+                # 确定替换的数量 num_to_replace 和起始位置 start_replace_idx
+                num_to_replace = 0
+                start_replace_idx = top_k 
 
+                # 优先使用显式指定的 replace_count
+                if self.replace_count is not None:
+                     num_to_replace = self.replace_count
+                     start_replace_idx = top_k - num_to_replace
+                else:
+                    # 兼容旧模式名称
+                    if self.mode == "replace_last_two_with_topp":
+                        num_to_replace = 2
+                        start_replace_idx = top_k - 2
+                    elif self.mode == "replace_last_one_with_topp":
+                        num_to_replace = 1
+                        start_replace_idx = top_k - 1
+                    else: # 原始模式：从 use_top_m 开始替换
+                        num_to_replace = top_k - self.use_top_m
+                        start_replace_idx = self.use_top_m
+
+                # 确保 start_replace_idx 合法
+                start_replace_idx = max(0, start_replace_idx)
+                
                 # 确保 m_idx 至少能覆盖到替换范围，防止索引越界
                 m_idx = max(m_idx, start_replace_idx + 1)
                 m_idx = min(m_idx, num_experts)
-                dynamic_m_list.append(m_idx)
+                # dynamic_m_list.append(m_idx)
 
                 # 2. 执行随机替换
                 if num_to_replace > 0:
@@ -95,7 +115,7 @@ class BaseExpertSubsetBlockWrapper(nn.Module):
         final_weights = F.softmax(selected_logits, dim=-1)
 
         self.last_metadata = {
-            "dynamic_m": dynamic_m_list,
+            # "dynamic_m": dynamic_m_list,
             "original_ids": topk_indices.detach().cpu().tolist(),
             "original_weights": original_weights_normalized.detach().cpu().tolist(),
             "modified_ids": new_indices.detach().cpu().tolist(),
@@ -110,8 +130,8 @@ class BaseExpertSubsetBlockWrapper(nn.Module):
 # 2. DeepSeek-V2 专用包装器
 # ==========================================
 class DeepseekExpertSubsetBlockWrapper(BaseExpertSubsetBlockWrapper):
-    def __init__(self, original_block, use_top_m, mode="remove", p_threshold=0.9):
-        super().__init__(original_block, use_top_m, mode, p_threshold)
+    def __init__(self, original_block, use_top_m, mode="remove", p_threshold=0.9, replace_count=None):
+        super().__init__(original_block, use_top_m, mode, p_threshold, replace_count)
         self.config = original_block.config
         self.gate = original_block.gate
         self.experts = original_block.experts
@@ -187,15 +207,96 @@ class DeepseekExpertSubsetBlockWrapper(BaseExpertSubsetBlockWrapper):
         return output
 
 # ==========================================
-# 3. 工具函数
+# 3. Qwen 专用包装器
 # ==========================================
-def apply_expert_subset_to_model(model, use_top_m, mode="replace_with_topp", p_threshold=0.9):
+class QwenExpertSubsetBlockWrapper(BaseExpertSubsetBlockWrapper):
+    def __init__(self, original_block, use_top_m, mode="remove", p_threshold=0.9, replace_count=None):
+        super().__init__(original_block, use_top_m, mode, p_threshold, replace_count)
+        # self.config = original_block.config # Qwen3 block might not have config
+        self.config = getattr(original_block, "config", None)
+        
+        self.gate = original_block.gate
+        self.experts = original_block.experts
+        self.shared_expert = getattr(original_block, "shared_expert", None)
+        self.shared_expert_gate = getattr(original_block, "shared_expert_gate", None)
+        
+    def forward(self, hidden_states: torch.Tensor):
+        batch_size, sequence_length, hidden_dim = hidden_states.shape
+        hidden_states_flat = hidden_states.view(-1, hidden_dim)
+        
+        # 1. Compute Logits
+        router_logits = self.gate(hidden_states_flat)
+        
+        # 2. Process Subset Selection
+        final_weights, final_indices = self._process_subset_selection(router_logits)
+        
+        # 3. Expert Computation
+        final_hidden_states = torch.zeros(
+            (batch_size * sequence_length, hidden_dim), 
+            dtype=hidden_states.dtype, device=hidden_states.device
+        )
+        
+        expert_mask = torch.nn.functional.one_hot(final_indices, num_classes=self.num_experts).permute(2, 1, 0)
+        expert_hit = torch.greater(expert_mask.sum(dim=(-1, -2)), 0).nonzero()
+        
+        for expert_idx in expert_hit:
+            expert_idx = expert_idx[0].item()
+            if expert_idx < len(self.experts):
+                expert_layer = self.experts[expert_idx]
+            else:
+                continue 
+
+            mask_slice = expert_mask[expert_idx]
+            top_m_indices, sample_indices = torch.where(mask_slice)
+            
+            if sample_indices.numel() == 0: continue
+
+            current_state = hidden_states_flat[sample_indices]
+            current_weights = final_weights[sample_indices, top_m_indices]
+            
+            expert_out = expert_layer(current_state)
+            current_hidden_states = expert_out * current_weights.unsqueeze(1)
+            final_hidden_states.index_add_(0, sample_indices, current_hidden_states.to(hidden_states.dtype))
+
+        # 4. Shared Expert
+        if self.shared_expert is not None:
+            shared_out = self.shared_expert(hidden_states_flat)
+            if self.shared_expert_gate is not None:
+                shared_out = F.sigmoid(self.shared_expert_gate(hidden_states_flat)) * shared_out
+            final_hidden_states += shared_out
+            
+        return final_hidden_states.reshape(batch_size, sequence_length, hidden_dim)
+
+# ==========================================
+# 4. 工具函数
+# ==========================================
+def apply_expert_subset_to_model(model, use_top_m, mode="replace_with_topp", p_threshold=0.9, replace_count=None):
     count = 0
+    
+    # 简单的模型类型判断
+    config = getattr(model, "config", None)
+    model_type = getattr(config, "model_type", "").lower()
+    is_qwen = "qwen" in model_type
+    is_deepseek = "deepseek" in model_type
+
     for layer in model.model.layers:
+        target_moe = None
+        
+        # DeepSeek
         if hasattr(layer, "mlp") and (hasattr(layer.mlp, "experts") or hasattr(layer.mlp, "gate")):
             target_moe = layer.mlp
+        
+        # Qwen
+        elif is_qwen and hasattr(layer, "mlp") and hasattr(layer.mlp, "gate"):
+            target_moe = layer.mlp
+            
+        if target_moe:
             if not isinstance(target_moe, BaseExpertSubsetBlockWrapper):
-                new_block = DeepseekExpertSubsetBlockWrapper(target_moe, use_top_m, mode, p_threshold)
+                if is_qwen:
+                    new_block = QwenExpertSubsetBlockWrapper(target_moe, use_top_m, mode, p_threshold, replace_count)
+                else:
+                    # Default to Deepseek for now or existing logic
+                    new_block = DeepseekExpertSubsetBlockWrapper(target_moe, use_top_m, mode, p_threshold, replace_count)
                 layer.mlp = new_block
                 count += 1
             else:
@@ -203,8 +304,9 @@ def apply_expert_subset_to_model(model, use_top_m, mode="replace_with_topp", p_t
                 target_moe.use_top_m = use_top_m
                 target_moe.mode = mode
                 target_moe.p_threshold = p_threshold
+                target_moe.replace_count = replace_count
                 
-    print(f"Applied wrapper to {count} MoE layers. Mode={mode}, TopM={use_top_m}, P={p_threshold}")
+    print(f"Applied wrapper to {count} MoE layers. Mode={mode}, TopM={use_top_m}, P={p_threshold}, ReplaceCount={replace_count}")
     return model
 
 def collect_moe_metadata(model):

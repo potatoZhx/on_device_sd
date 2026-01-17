@@ -84,10 +84,29 @@ def process_fidelity_data(jsonl_path, prefix_match_only=True, max_steps=None):
                     gold = std_layer_ids[l] 
                     orig = orig_layer_ids[l] 
                     
+                    # 辅助函数：将可能的嵌套列表展平为集合
+                    def get_expert_set(data):
+                        s = set()
+                        if isinstance(data, list):
+                            for item in data:
+                                if isinstance(item, list):
+                                    for sub in item:
+                                        s.add(sub)
+                                else:
+                                    s.add(item)
+                        else:
+                            s.add(data)
+                        return s
+
+                    gold_set = get_expert_set(gold)
+                    orig_set = get_expert_set(orig)
+                    
+                    # Hard Match: 列表结构完全一致 (顺序、内容)
+                    # Soft Match: 激活的专家集合一致
                     if gold == orig:
                         s_hard += 1
                         total_hard += 1
-                    elif set(gold) == set(orig):
+                    elif gold_set == orig_set:
                         s_soft += 1
                         total_soft += 1
                     else:
@@ -159,8 +178,8 @@ def plot_fidelity_figure(stats, distributions, save_path="routing_fidelity_plot.
 
 if __name__ == "__main__":
     # === 配置参数 ===
-    INPUT_FILE = "experiment_summary_20260108_152334.jsonl"
-    DIR = "./data/results_replace_last_one_with_topp"  # 指定输出文件夹
+    INPUT_FILE = "experiment_summary_20260117_221546.jsonl"
+    DIR = "./data/mtbench_results_4_with_Qwen3-30B-A3B-Base/" 
     
     PREFIX_MATCH_ONLY = False  # 是否仅对比前缀一致的步骤
     

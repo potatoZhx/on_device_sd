@@ -5,8 +5,8 @@ import time
 import random
 import traceback
 import gc 
+import copy
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from datasets import load_dataset
 from tqdm import tqdm
 
 # === DynamicCache 补丁 ===
@@ -17,38 +17,45 @@ if not hasattr(DynamicCache, "get_usable_length"):
     DynamicCache.get_usable_length = get_usable_length
 
 # === 导入核心逻辑 ===
+# 假设 ExpertSubsetInference.py 在同级目录
 from ExpertSubsetInference import apply_expert_subset_to_model, collect_moe_metadata
 
 def generate_request_id():
     return int(time.time() * 1000000) + random.randint(0, 1000)
 
-def prepare_wikitext_data(tokenizer, seq_len=1024):
-    """加载本地 Parquet 并切分为标准长度 Chunks"""
-    LOCAL_TEST_FILE = "/data2/group_谈海生/lagin/data/wikitext/wikitext-2-raw-v1/test-00000-of-00001.parquet"
-    print(f"正在加载 WikiText-2 测试集: {LOCAL_TEST_FILE}")
+def prepare_mtbench_data(tokenizer):
+    """加载 MTBench 数据并格式化"""
+    DATA_FILE = "/data2/group_谈海生/lagin/data/mtbench101/mtbench101.jsonl"
+    print(f"正在加载 MTBench 数据: {DATA_FILE}")
     
+    samples = []
     try:
-        test_data = load_dataset("parquet", data_files={"test": LOCAL_TEST_FILE}, split="test")
+        with open(DATA_FILE, "r", encoding="utf-8") as f:
+            for line in f:
+                if not line.strip(): continue
+                item = json.loads(line)
+                history = item.get("history", [])
+                
+                # Format history
+                text = ""
+                for turn in history:
+                    if "user" in turn:
+                        text += f"User: {turn['user']}\n"
+                    if "bot" in turn:
+                        text += f"Bot: {turn['bot']}\n"
+                
+                if not text: continue
+                
+                # Tokenize
+                encodings = tokenizer(text, return_tensors="pt")
+                samples.append(encodings.input_ids)
+                
     except Exception as e:
         print(f"❌ 加载失败: {e}")
         return []
 
-    print("处理数据...")
-    full_text = "\n\n".join(test_data["text"])
-    encodings = tokenizer(full_text, return_tensors="pt")
-    input_ids = encodings.input_ids
-    total_length = input_ids.size(1)
-    
-    batch_input_ids = []
-    stride = seq_len
-    for i in range(0, total_length, stride):
-        end_loc = min(i + seq_len, total_length)
-        chunk = input_ids[:, i:end_loc]
-        if chunk.size(1) == seq_len:
-            batch_input_ids.append(chunk)
-            
-    print(f"生成了 {len(batch_input_ids)} 个样本。")
-    return batch_input_ids
+    print(f"加载了 {len(samples)} 个样本。")
+    return samples
 
 def manual_decode_step(model, input_ids, attention_mask, past_key_values):
     """
@@ -73,42 +80,54 @@ def manual_decode_step(model, input_ids, attention_mask, past_key_values):
 
 def run_experiment():
     # === 配置参数 ===
-    MODEL_PATH = "/data2/group_谈海生/lagin/models/DeepSeek-V2-Lite"
+    MODEL_PATH = "/data2/group_谈海生/lagin/models/Qwen3-30B-A3B-Base"
+    MODEL_NAME = "Qwen3-30B-A3B-Base"
     BASE_MAX_LEN = 1024 
     NUM_DECODE_STEPS = 10
     TOP_M = 2
     P_THRESHOLD = 0.9
-    TASK_MODE = 'replace_last_one_with_topp' # ["replace_with_topp", "replace_last_two_with_topp", "replace_last_one_with_topp"]
+    REPLACE_COUNT = 4
+    TASK_MODE = 'replace_with_topp' # ["replace_with_topp", "replace_last_two_with_topp", "replace_last_one_with_topp"]
     
-    MAX_SAMPLES = 500
+    MAX_SAMPLES = 300
     
     TIMESTAMP = time.strftime("%Y%m%d_%H%M%S")
-    RESULT_DIR = f"./get_sd_data/data/results_{TASK_MODE}"
+    # 修改结果目录以区分
+    RESULT_DIR = f"./get_sd_data/data/mtbench_results_{REPLACE_COUNT}_with_{MODEL_NAME}"
     os.makedirs(RESULT_DIR, exist_ok=True)
 
     SUMMARY_FILE_PATH = f"{RESULT_DIR}/experiment_summary_{TIMESTAMP}.jsonl"
     print(f"📄 汇总数据将追加写入: {SUMMARY_FILE_PATH}")
 
-    print("加载模型...")
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH, trust_remote_code=True)
-    model = AutoModelForCausalLM.from_pretrained(
-        MODEL_PATH, 
-        device_map="auto", 
-        torch_dtype=torch.bfloat16, 
-        trust_remote_code=True
-    )
+    print(f"加载模型: {MODEL_PATH} ...")
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH, trust_remote_code=True)
+        model = AutoModelForCausalLM.from_pretrained(
+            MODEL_PATH, 
+            device_map="auto", 
+            torch_dtype=torch.bfloat16, 
+            trust_remote_code=True
+        )
+    except Exception as e:
+        print(f"❌ 模型加载失败: {e}")
+        return
 
-    model = apply_expert_subset_to_model(model, use_top_m=TOP_M, mode=TASK_MODE, p_threshold=P_THRESHOLD)
+    # 应用 MoE 干预
+    model = apply_expert_subset_to_model(model, use_top_m=TOP_M, mode=TASK_MODE, p_threshold=P_THRESHOLD, replace_count=REPLACE_COUNT)
 
-    raw_batches = prepare_wikitext_data(tokenizer, seq_len=BASE_MAX_LEN)
+    # 加载数据
+    raw_batches = prepare_mtbench_data(tokenizer)
     if not raw_batches: return
     
     total_samples = 0
     data_to_process = raw_batches[:MAX_SAMPLES]
-    pbar = tqdm(data_to_process, total=MAX_SAMPLES, desc="Processing", unit="sample")
+    pbar = tqdm(data_to_process, total=len(data_to_process), desc="Processing", unit="sample")
 
     for raw_chunk in pbar:
-        target_len = random.randint(1, BASE_MAX_LEN)
+        # 随机截取长度，但不能超过实际长度
+        actual_len = raw_chunk.size(1)
+        target_len = random.randint(1, min(actual_len, BASE_MAX_LEN))
+        
         sample_input = raw_chunk[:, :target_len].to(model.device)
         
         initial_attention_mask = torch.ones(sample_input.shape, device=model.device, dtype=torch.long)
@@ -118,7 +137,10 @@ def run_experiment():
 
         try:
             # A. Prefill
-            for layer in model.model.layers: layer.mlp.mode = "standard"
+            for layer in model.model.layers: 
+                if hasattr(layer, "mlp") and hasattr(layer.mlp, "mode"):
+                    layer.mlp.mode = "standard"
+            
             with torch.no_grad():
                 outputs = model(input_ids=sample_input, attention_mask=initial_attention_mask, use_cache=True)
                 past_key_values = outputs.past_key_values
@@ -126,25 +148,28 @@ def run_experiment():
             prefill_id = prefill_token.item()
 
             # B. Intervention
-            curr_input, curr_kv = prefill_token, past_key_values 
+            curr_input = prefill_token
+            # 使用 deepcopy 避免污染原始 Cache
+            curr_kv = copy.deepcopy(past_key_values)
             curr_mask = torch.cat([initial_attention_mask, torch.ones((1, 1), device=model.device, dtype=torch.long)], dim=1)
             intervention_out, intervention_data = [], []
             
             for step in range(NUM_DECODE_STEPS):
-                for layer in model.model.layers: layer.mlp.mode = TASK_MODE
+                for layer in model.model.layers: 
+                    if hasattr(layer, "mlp") and hasattr(layer.mlp, "mode"):
+                        layer.mlp.mode = TASK_MODE
+                
                 with torch.no_grad():
-                    # [修改] 接收 embedding 返回值
                     logits, embedding, new_kv = manual_decode_step(model, curr_input, curr_mask, curr_kv)
                     next_token = logits.argmax(dim=-1)
                 
                 meta = collect_moe_metadata(model)
                 intervention_data.append({
                     "step": step + 1,
-                    # "dynamic_m": [m['dynamic_m'][0] for m in meta],
-                    "router_original": {"ids": [m['original_ids'][0] for m in meta], "weights": [m['original_weights'][0] for m in meta]},
-                    "router_modified": {"ids": [m['modified_ids'][0] for m in meta], "weights": [m['final_weights'][0] for m in meta]},
+                    # "dynamic_m": [m.get('dynamic_m', []) for m in meta],
+                    "router_original": {"ids": [m.get('original_ids', []) for m in meta], "weights": [m.get('original_weights', []) for m in meta]},
+                    "router_modified": {"ids": [m.get('modified_ids', []) for m in meta], "weights": [m.get('final_weights', []) for m in meta]},
                     "full_logits": logits[0].float().cpu().numpy().tolist(),
-                    # [新增] 保存 Embedding (转为 list)
                     "final_embedding": embedding[0].float().cpu().numpy().tolist()
                 })
                 intervention_out.append(next_token.item())
@@ -152,23 +177,33 @@ def run_experiment():
                 curr_mask = torch.cat([curr_mask, torch.ones((1, 1), device=model.device, dtype=torch.long)], dim=1)
 
             # C. Baseline
-            curr_input, curr_kv = prefill_token, past_key_values
+            for layer in model.model.layers: 
+                if hasattr(layer, "mlp") and hasattr(layer.mlp, "mode"):
+                    layer.mlp.mode = "standard"
+            
+            with torch.no_grad():
+                # 复用 Prefill 的 KV Cache，避免重新计算
+                curr_kv = copy.deepcopy(past_key_values)
+                curr_input = prefill_token
+            
+            # 重置 Mask
             curr_mask = torch.cat([initial_attention_mask, torch.ones((1, 1), device=model.device, dtype=torch.long)], dim=1)
             baseline_out, baseline_data = [], []
 
             for step in range(NUM_DECODE_STEPS):
-                for layer in model.model.layers: layer.mlp.mode = "standard"
+                for layer in model.model.layers: 
+                    if hasattr(layer, "mlp") and hasattr(layer.mlp, "mode"):
+                        layer.mlp.mode = "standard"
+                
                 with torch.no_grad():
-                    # [修改] 接收 embedding 返回值
                     logits, embedding, new_kv = manual_decode_step(model, curr_input, curr_mask, curr_kv)
                     next_token = logits.argmax(dim=-1)
                 
                 meta = collect_moe_metadata(model)
                 baseline_data.append({
                     "step": step + 1,
-                    "router_standard": {"ids": [m['original_ids'][0] for m in meta], "weights": [m['original_weights'][0] for m in meta]},
+                    "router_standard": {"ids": [m.get('original_ids', []) for m in meta], "weights": [m.get('original_weights', []) for m in meta]},
                     "full_logits": logits[0].float().cpu().numpy().tolist(),
-                    # [新增] 保存 Embedding
                     "final_embedding": embedding[0].float().cpu().numpy().tolist()
                 })
                 baseline_out.append(next_token.item())
@@ -179,20 +214,18 @@ def run_experiment():
             match_rate = sum(1 for a, b in zip(intervention_out, baseline_out) if a == b) / len(intervention_out)
             
             record = {
-                "metadata": {"req_id": req_id, "len": target_len, "params": {"topm": TOP_M, "p": P_THRESHOLD}},
+                "metadata": {"req_id": req_id, "len": target_len, "params": {"topm": TOP_M, "p": P_THRESHOLD, "replace_count": REPLACE_COUNT}},
                 "data": {"input": sample_input[0].tolist(), "prefill": [prefill_id]},
                 "intervention": {"output": intervention_out, "steps": intervention_data},
                 "baseline": {"output": baseline_out, "steps": baseline_data},
                 "analysis": {"match_rate": match_rate}
             }
             
-            # 追加写入大文件
             with open(SUMMARY_FILE_PATH, "a", encoding="utf-8") as f:
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
             
             total_samples += 1
             
-            # 显式释放内存
             del record, intervention_data, baseline_data, embedding, logits
             if total_samples % 5 == 0:
                 gc.collect()

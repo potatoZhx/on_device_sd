@@ -12,6 +12,7 @@ data/
 .venv
 /log/
 /pre_exp/draft_moe/__pycache__/
+.trae
 
 # macOS
 .DS_Store
