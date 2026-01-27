@@ -179,7 +179,7 @@ def plot_fidelity_figure(stats, distributions, save_path="routing_fidelity_plot.
 if __name__ == "__main__":
     # === 配置参数 ===
     INPUT_FILE = "experiment_summary_20260117_221546.jsonl"
-    DIR = "./data/mtbench_results_4_with_Qwen3-30B-A3B-Base/" 
+    DIR = "./data/mtbench_results_3_with_Qwen3-30B-A3B-Base/" 
     
     PREFIX_MATCH_ONLY = False  # 是否仅对比前缀一致的步骤
     

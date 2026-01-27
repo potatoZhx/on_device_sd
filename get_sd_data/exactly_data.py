@@ -300,7 +300,7 @@ if __name__ == "__main__":
     # 请确保路径正确
     # DIR = "./data/mtbench_results_replace_last_one_with_topp"
     # 使用用户最近使用的目录
-    DIR = "./data/mtbench_results_4_with_Qwen3-30B-A3B-Base"
+    DIR = "/data2/group_谈海生/lagin/data/Sd_Data/data/wiki_results_1_with_Qwen3-30B-A3B-Base"
     # 自动寻找最新的 jsonl 文件
     files = [f for f in os.listdir(DIR) if f.endswith('.jsonl') and 'summary' in f]
     if not files:

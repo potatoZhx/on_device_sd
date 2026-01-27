@@ -9,10 +9,11 @@ dependencies = [
     "datasets>=4.4.1",
     "einops>=0.8.1",
     "matplotlib>=3.10.7",
+    "scikit-learn",
     "torch==2.7",
     "transformers>=4.57.3",
 ]
 
 [[tool.uv.index]]
-url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+url = "https://mirrors.aliyun.com/pypi/simple"
 default = true

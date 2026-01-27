@@ -25,7 +25,7 @@ mkdir -p ./logs
 
 # 优化设置
 export OMP_NUM_THREADS=4    # 限制 CPU 线程数
-PYTHON_SCRIPT="./get_sd_data/wiki_experiment.py"
+PYTHON_SCRIPT="./get_sd_data/mtbench101_experiment.py"
 
 # --- 3. 启动命令 ---
 echo "Running Expert Subset Inference Script: $PYTHON_SCRIPT"

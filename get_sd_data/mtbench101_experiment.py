@@ -7,6 +7,7 @@ import traceback
 import gc 
 import copy
 from transformers import AutoModelForCausalLM, AutoTokenizer
+from datasets import load_dataset
 from tqdm import tqdm
 
 # === DynamicCache 补丁 ===
@@ -22,6 +23,34 @@ from ExpertSubsetInference import apply_expert_subset_to_model, collect_moe_meta
 
 def generate_request_id():
     return int(time.time() * 1000000) + random.randint(0, 1000)
+
+def prepare_wikitext_data(tokenizer, seq_len=1024):
+    """加载本地 Parquet 并切分为标准长度 Chunks"""
+    LOCAL_TEST_FILE = "/data2/group_谈海生/lagin/data/wikitext/wikitext-2-raw-v1/test-00000-of-00001.parquet"
+    print(f"正在加载 WikiText-2 测试集: {LOCAL_TEST_FILE}")
+    
+    try:
+        test_data = load_dataset("parquet", data_files={"test": LOCAL_TEST_FILE}, split="test")
+    except Exception as e:
+        print(f"❌ 加载失败: {e}")
+        return []
+
+    print("处理数据...")
+    full_text = "\n\n".join(test_data["text"])
+    encodings = tokenizer(full_text, return_tensors="pt")
+    input_ids = encodings.input_ids
+    total_length = input_ids.size(1)
+    
+    batch_input_ids = []
+    stride = seq_len
+    for i in range(0, total_length, stride):
+        end_loc = min(i + seq_len, total_length)
+        chunk = input_ids[:, i:end_loc]
+        if chunk.size(1) == seq_len:
+            batch_input_ids.append(chunk)
+            
+    print(f"生成了 {len(batch_input_ids)} 个样本。")
+    return batch_input_ids
 
 def prepare_mtbench_data(tokenizer):
     """加载 MTBench 数据并格式化"""
@@ -82,18 +111,19 @@ def run_experiment():
     # === 配置参数 ===
     MODEL_PATH = "/data2/group_谈海生/lagin/models/Qwen3-30B-A3B-Base"
     MODEL_NAME = "Qwen3-30B-A3B-Base"
+    DATASET_NAME = "wiki" # Options: "mtbench", "wiki"
     BASE_MAX_LEN = 1024 
     NUM_DECODE_STEPS = 10
     TOP_M = 2
     P_THRESHOLD = 0.9
-    REPLACE_COUNT = 4
+    REPLACE_COUNT = 2
     TASK_MODE = 'replace_with_topp' # ["replace_with_topp", "replace_last_two_with_topp", "replace_last_one_with_topp"]
     
     MAX_SAMPLES = 300
     
     TIMESTAMP = time.strftime("%Y%m%d_%H%M%S")
     # 修改结果目录以区分
-    RESULT_DIR = f"./get_sd_data/data/mtbench_results_{REPLACE_COUNT}_with_{MODEL_NAME}"
+    RESULT_DIR = f"./get_sd_data/data/{DATASET_NAME}_results_{REPLACE_COUNT}_with_{MODEL_NAME}"
     os.makedirs(RESULT_DIR, exist_ok=True)
 
     SUMMARY_FILE_PATH = f"{RESULT_DIR}/experiment_summary_{TIMESTAMP}.jsonl"
@@ -116,7 +146,11 @@ def run_experiment():
     model = apply_expert_subset_to_model(model, use_top_m=TOP_M, mode=TASK_MODE, p_threshold=P_THRESHOLD, replace_count=REPLACE_COUNT)
 
     # 加载数据
-    raw_batches = prepare_mtbench_data(tokenizer)
+    if DATASET_NAME == "wiki":
+        raw_batches = prepare_wikitext_data(tokenizer, seq_len=BASE_MAX_LEN)
+    else:
+        raw_batches = prepare_mtbench_data(tokenizer)
+
     if not raw_batches: return
     
     total_samples = 0
