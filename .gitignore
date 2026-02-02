@@ -1,5 +1,6 @@
 /log/
 /pre_exp/draft_moe/__pycache__/
+*.json
 
 # macOS
 .DS_Store
