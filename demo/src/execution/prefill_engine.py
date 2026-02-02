@@ -1,6 +1,6 @@
 from typing import Dict, List, Optional
 import torch
-from ..core.types import ExpertID, LayerExpertActivations, ExpertActivation
+from ..core.types import ExpertID, LayerExpertActivations, ExpertActivation, DeviceType
 from ..core.model import MoEConfig
 from ..memory.parameter_loader import ParameterLoader
 from ..memory.expert_cache import ExpertCache
@@ -160,6 +160,8 @@ class PrefillEngine:
         k_proj = self.parameter_loader.static_params_gpu[f"{layer_prefix}.k_proj"]
         v_proj = self.parameter_loader.static_params_gpu[f"{layer_prefix}.v_proj"]
         o_proj = self.parameter_loader.static_params_gpu[f"{layer_prefix}.o_proj"]
+        q_norm = self.parameter_loader.static_params_gpu.get(f"{layer_prefix}.q_norm")
+        k_norm = self.parameter_loader.static_params_gpu.get(f"{layer_prefix}.k_norm")
         
         # Apply attention
         output = self.gpu_ops.self_attention(
@@ -169,7 +171,9 @@ class PrefillEngine:
             v_proj=v_proj,
             o_proj=o_proj,
             kv_cache=kv_cache,
-            layer_idx=layer_idx
+            layer_idx=layer_idx,
+            q_norm=q_norm,
+            k_norm=k_norm
         )
         
         return output
@@ -354,12 +358,12 @@ class PrefillEngine:
         norm_weight = self.parameter_loader.static_params_gpu[
             f"layer_{layer_idx}.{norm_name}"
         ]
-        return self.gpu_ops.layernorm(hidden_states, norm_weight)
+        return self.gpu_ops.layernorm(hidden_states, norm_weight, eps=self.config.rms_norm_eps)
     
-    defdef _final_layernorm(self, hidden_states: torch.Tensor) -> torch.Tensor:
+    def _final_layernorm(self, hidden_states: torch.Tensor) -> torch.Tensor:
         """Apply final layer normalization"""
         norm_weight = self.parameter_loader.static_params_gpu['final_layernorm']
-        return self.gpu_ops.layernorm(hidden_states, norm_weight)
+        return self.gpu_ops.layernorm(hidden_states, norm_weight, eps=self.config.rms_norm_eps)
     
     def _lm_head(self, hidden_states: torch.Tensor) -> torch.Tensor:
         """Apply language model head"""

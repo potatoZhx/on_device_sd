@@ -12,10 +12,10 @@ from ..core.types import (
 from ..memory.parameter_loader import ParameterLoader
 from ..memory.expert_cache import ExpertCache
 from ..scheduling.prefetcher import ExpertPrefetcher, SimplePrefetchStrategy, HistoryBasedPrefetchStrategy
-from ..scheduling.draft_scheduler import SimpleDraftScheduler, AdaptiveDraftScheduler
+from ..scheduling.draft_schduler import SimpleDraftScheduler, AdaptiveDraftScheduler
 from ..scheduling.cache_strategy import LRUCacheStrategy, LFUCacheStrategy, AdaptiveCacheStrategy
 from ..execution.orchestrator import EnhancedInferenceOrchestrator
-from ..execution.acceptance import StandardAcceptanceStrategy, AdaptiveAcceptanceStrategy
+from ..execution.acceptance_strategy import StandardAcceptanceStrategy, AdaptiveAcceptanceStrategy
 from ..utils.config import ConfigManager, InferenceConfig
 from ..utils.logger import get_logger, configure_logging
 from ..utils.metrics import MetricsCollector

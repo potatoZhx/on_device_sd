@@ -91,8 +91,8 @@ class TestKVCache(unittest.TestCase):
         """Test appending to KV cache"""
         batch_size = 1
         seq_len = 10
-        num_heads = self.config.num_attention_heads
-        head_dim = self.config.hidden_size // num_heads
+        num_heads = self.config.num_key_value_heads
+        head_dim = self.config.head_dim
         
         # Create dummy key-value tensors
         keys = torch.randn(batch_size, num_heads, seq_len, head_dim, device='cuda')
@@ -113,8 +113,10 @@ class TestKVCache(unittest.TestCase):
     def test_kv_cache_backup_restore(self):
         """Test backup and restore functionality"""
         # Add some data
-        keys = torch.randn(1, 8, 5, 32, device='cuda')
-        values = torch.randn(1, 8, 5, 32, device='cuda')
+        num_heads = self.config.num_key_value_heads
+        head_dim = self.config.head_dim
+        keys = torch.randn(1, num_heads, 5, head_dim, device='cuda')
+        values = torch.randn(1, num_heads, 5, head_dim, device='cuda')
         
         self.kv_cache.append(0, keys, values)
         self.kv_cache.update_length(5)
@@ -123,8 +125,8 @@ class TestKVCache(unittest.TestCase):
         self.kv_cache.backup_for_draft()
         
         # Modify cache
-        more_keys = torch.randn(1, 8, 3, 32, device='cuda')
-        more_values = torch.randn(1, 8, 3, 32, device='cuda')
+        more_keys = torch.randn(1, num_heads, 3, head_dim, device='cuda')
+        more_values = torch.randn(1, num_heads, 3, head_dim, device='cuda')
         self.kv_cache.append(0, more_keys, more_values, start_pos=5)
         self.kv_cache.update_length(8)
         

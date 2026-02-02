@@ -6,7 +6,7 @@ from ..core.model import MoEConfig
 from ..memory.parameter_loader import ParameterLoader
 from ..memory.expert_cache import ExpertCache
 from ..memory.kv_cache import KVCache
-from ..scheduling.draft_scheduler import DraftSchedulingStrategy
+from ..scheduling.draft_schduler import DraftSchedulingStrategy
 from ..operators.gpu_operators import GPUOperators
 from ..operators.cpu_operators import CPUOperators
 from ..utils.logger import get_logger
@@ -409,7 +409,7 @@ class DraftEngine:
     
     def _layernorm(self, hidden_states: torch.Tensor, layer_idx: int, norm_name: str) -> torch.Tensor:
         norm_weight = self.parameter_loader.static_params_gpu[f"layer_{layer_idx}.{norm_name}"]
-        return self.gpu_ops.layernorm(hidden_states, norm_weight)
+        return self.gpu_ops.layernorm(hidden_states, norm_weight, eps=self.config.rms_norm_eps)
     
     def _self_attention(
         self,
@@ -422,14 +422,24 @@ class DraftEngine:
         k_proj = self.parameter_loader.static_params_gpu[f"{layer_prefix}.k_proj"]
         v_proj = self.parameter_loader.static_params_gpu[f"{layer_prefix}.v_proj"]
         o_proj = self.parameter_loader.static_params_gpu[f"{layer_prefix}.o_proj"]
+        q_norm = self.parameter_loader.static_params_gpu.get(f"{layer_prefix}.q_norm")
+        k_norm = self.parameter_loader.static_params_gpu.get(f"{layer_prefix}.k_norm")
         
         return self.gpu_ops.self_attention(
-            hidden_states, q_proj, k_proj, v_proj, o_proj, kv_cache, layer_idx
+            hidden_states,
+            q_proj,
+            k_proj,
+            v_proj,
+            o_proj,
+            kv_cache,
+            layer_idx,
+            q_norm=q_norm,
+            k_norm=k_norm
         )
     
     def _final_layernorm(self, hidden_states: torch.Tensor) -> torch.Tensor:
         norm_weight = self.parameter_loader.static_params_gpu['final_layernorm']
-        return self.gpu_ops.layernorm(hidden_states, norm_weight)
+        return self.gpu_ops.layernorm(hidden_states, norm_weight, eps=self.config.rms_norm_eps)
     
     def _lm_head(self, hidden_states: torch.Tensor) -> torch.Tensor:
         lm_head_weight = self.parameter_loader.static_params_gpu['lm_head']

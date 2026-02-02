@@ -38,15 +38,12 @@ class GPUOperators:
         self,
         hidden_states: torch.Tensor,
         weight: torch.Tensor,
-        eps: float = 1e-5
+        eps: float = 1e-6
     ) -> torch.Tensor:
-        """Layer normalization"""
-        return F.layer_norm(
-            hidden_states,
-            normalized_shape=(self.config.hidden_size,),
-            weight=weight,
-            eps=eps
-        )
+        rms = hidden_states.float().pow(2).mean(dim=-1, keepdim=True)
+        inv = torch.rsqrt(rms + eps)
+        hidden_normed = (hidden_states.float() * inv).to(hidden_states.dtype)
+        return hidden_normed * weight
     
     def router(
         self,
@@ -106,7 +103,9 @@ class GPUOperators:
         v_proj: torch.Tensor,
         o_proj: torch.Tensor,
         kv_cache: Optional[any],
-        layer_idx: int
+        layer_idx: int,
+        q_norm: Optional[torch.Tensor] = None,
+        k_norm: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
         """
         Self-attention with KV caching.
@@ -121,56 +120,63 @@ class GPUOperators:
             Attention output [batch, seq_len, hidden_size]
         """
         batch_size, seq_len, hidden_size = hidden_states.shape
-        
         num_heads = self.config.num_attention_heads
-        head_dim = hidden_size // num_heads
-        
-        # Q, K, V projections
+        kv_heads = self.config.num_key_value_heads
+        head_dim = self.config.head_dim
         q = F.linear(hidden_states, q_proj)
-        k = F.linear(hidden_statesk = F.linear(hidden_states, k_proj)
+        k = F.linear(hidden_states, k_proj)
         v = F.linear(hidden_states, v_proj)
-        
-        # Reshape to multi-head format
         q = q.view(batch_size, seq_len, num_heads, head_dim).transpose(1, 2)
-        k = k.view(batch_size, seq_len, num_heads, head_dim).transpose(1, 2)
-        v = v.view(batch_size, seq_len, num_heads, head_dim).transpose(1, 2)
-        
-        # Apply RoPE (Rotary Position Embedding) if needed
-        # q, k = self._apply_rope(q, k, kv_cache.current_length)
-        
-        # Update KV cache
+        k = k.view(batch_size, seq_len, kv_heads, head_dim).transpose(1, 2)
+        v = v.view(batch_size, seq_len, kv_heads, head_dim).transpose(1, 2)
+        if q_norm is not None:
+            q = self._rms_norm_head(q, q_norm)
+        if k_norm is not None:
+            k = self._rms_norm_head(k, k_norm)
+        start_pos = kv_cache.current_length if kv_cache is not None else 0
+        q, k = self._apply_rope(q, k, start_pos)
         if kv_cache is not None:
-            k_cached, v_cached = kv_cache.append(
-                layer_idx, k, v, start_pos=kv_cache.current_length
-            )
+            k_cached, v_cached = kv_cache.append(layer_idx, k, v, start_pos=start_pos)
         else:
             k_cached, v_cached = k, v
-        
-        # Scaled dot-product attention
+        if num_heads != kv_heads:
+            groups = num_heads // kv_heads
+            k_cached = k_cached.repeat_interleave(groups, dim=1)
+            v_cached = v_cached.repeat_interleave(groups, dim=1)
         attn_weights = torch.matmul(q, k_cached.transpose(-2, -1)) / (head_dim ** 0.5)
         attn_weights = F.softmax(attn_weights, dim=-1)
-        
-        # Apply attention to values
         attn_output = torch.matmul(attn_weights, v_cached)
-        
-        # Reshape back
         attn_output = attn_output.transpose(1, 2).contiguous()
         attn_output = attn_output.view(batch_size, seq_len, hidden_size)
-        
-        # Output projection
         output = F.linear(attn_output, o_proj)
-        
         return output
+
+    def _rms_norm_head(self, x: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
+        rms = x.float().pow(2).mean(dim=-1, keepdim=True)
+        inv = torch.rsqrt(rms + self.config.rms_norm_eps)
+        x_normed = (x.float() * inv).to(x.dtype)
+        return x_normed * weight
     
     def _apply_rope(
         self,
         q: torch.Tensor,
         k: torch.Tensor,
-        position: int
+        start_pos: int
     ) -> tuple:
-        """
-        Apply Rotary Position Embedding (RoPE).
-        Placeholder for actual implementation.
-        """
-        # TODO: Implement RoPE
+        b, h, t, d = q.shape
+        half = d // 2
+        theta = self.config.rope_theta
+        pos = torch.arange(start_pos, start_pos + t, device=q.device).float()
+        inv_freq = 1.0 / (theta ** (torch.arange(0, d, 2, device=q.device).float() / d))
+        freqs = torch.einsum("t,f->tf", pos, inv_freq)
+        cos = torch.cos(freqs)[None, None, :, :]
+        sin = torch.sin(freqs)[None, None, :, :]
+        def rotate(x):
+            x1 = x[..., :half]
+            x2 = x[..., half:]
+            x_rot_1 = x1 * cos - x2 * sin
+            x_rot_2 = x1 * sin + x2 * cos
+            return torch.cat([x_rot_1, x_rot_2], dim=-1)
+        q = rotate(q)
+        k = rotate(k)
         return q, k

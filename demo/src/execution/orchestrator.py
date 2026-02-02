@@ -13,12 +13,12 @@ from ..memory.parameter_loader import ParameterLoader
 from ..memory.expert_cache import ExpertCache
 from ..memory.kv_cache import KVCache
 from ..scheduling.prefetcher import ExpertPrefetcher
-from ..scheduling.draft_scheduler import DraftSchedulingStrategy
+from ..scheduling.draft_schduler import DraftSchedulingStrategy
 from .prefill_engine import PrefillEngine
 from .draft_engine import DraftEngine
 from .verify_engine import VerifyEngine
 from .standard_engine import StandardDecodeEngine
-from .acceptance import AcceptanceStrategy
+from .acceptance_strategy import AcceptanceStrategy
 from .batch_manager import BatchManager
 from ..utils.logger import get_logger
 from ..utils.metrics import MetricsCollector

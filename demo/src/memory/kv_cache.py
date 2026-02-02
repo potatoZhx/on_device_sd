@@ -16,9 +16,10 @@ class KVCache:
         self.config = config
         self.max_batch_size = max_batch_size
         self.num_layers = config.num_hidden_layers
-        self.num_heads = config.num_attention_heads
-        self.head_dim = config.hidden_size // config.num_attention_heads
-        self.max_seq_len = config.max_seq_length
+        self.num_heads = config.num_key_value_heads
+        self.head_dim = config.head_dim
+        self.max_seq_len = config.max_position_embeddings
+        self.dtype = config.get_dtype()
         
         # TODO：目前的实现预先分配了所有cache；？形状对应？ 参考nano-vllm考虑修改
         # KV cache storage: [num_layers][2][batch, num_heads, seq_len, head_dim]
@@ -43,7 +44,7 @@ class KVCache:
                 self.num_heads, 
                 self.max_seq_len, 
                 self.head_dim,
-                dtype=torch.float16,
+                dtype=self.dtype,
                 device='cuda'
             )
             value_cache = torch.zeros(
@@ -51,7 +52,7 @@ class KVCache:
                 self.num_heads, 
                 self.max_seq_len, 
                 self.head_dim,
-                dtype=torch.float16,
+                dtype=self.dtype,
                 device='cuda'
             )
             self.cache.append((key_cache, value_cache))
@@ -60,7 +61,7 @@ class KVCache:
         logger.debug("KV cache initialized")
     
     def append(
-        self        self,
+        self,
         layer_idx: int,
         key_states: torch.Tensor,
         value_states: torch.Tensor,
@@ -81,16 +82,17 @@ class KVCache:
         if start_pos is None:
             start_pos = self.current_length
         
+        batch_size = key_states.shape[0]
         seq_len = key_states.shape[2]
         end_pos = start_pos + seq_len
         
         # Store in cache
-        self.cache[layer_idx][0][:, :, start_pos:end_pos, :] = key_states
-        self.cache[layer_idx][1][:, :, start_pos:end_pos, :] = value_states
+        self.cache[layer_idx][0][:batch_size, :, start_pos:end_pos, :] = key_states
+        self.cache[layer_idx][1][:batch_size, :, start_pos:end_pos, :] = value_states
         
         # Return full cache up to end_pos
-        full_keys = self.cache[layer_idx][0][:, :, :end_pos, :]
-        full_values = self.cache[layer_idx][1][:, :, :end_pos, :]
+        full_keys = self.cache[layer_idx][0][:batch_size, :, :end_pos, :]
+        full_values = self.cache[layer_idx][1][:batch_size, :, :end_pos, :]
         
         return full_keys, full_values
     
@@ -192,4 +194,3 @@ class KVCache:
         
         # Assuming float16 (2 bytes per element)
         return (total_elements * 2) / (1024 * 1024)
-

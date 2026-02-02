@@ -3,7 +3,7 @@ import torch
 from src.core.types import ExpertID, LayerExpertActivations, ExpertActivation
 from src.core.model import MoEConfig
 from src.scheduling.prefetcher import SimplePrefetchStrategy
-from src.scheduling.draft_scheduler import SimpleDraftScheduler
+from src.scheduling.draft_schduler import SimpleDraftScheduler
 from src.scheduling.cache_strategy import LRUCacheStrategy, AdaptiveCacheStrategy
 
 
