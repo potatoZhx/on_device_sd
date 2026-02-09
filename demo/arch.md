@@ -60,7 +60,7 @@
     │  Engine     │ │   Engine    │ │   Engine    │
     │             │ │             │ │             │
     │ - Prefill   │ │ - CPU Exec  │ │ - Full      │
-│ - Decode    │ │ - GPU Subs  │ │   Model     │
+    │ - Decode    │ │ - GPU Subs  │ │   Model     │
     │ - Batching  │ │ - Metrics   │ │ - Accept    │
     └─────────────┘ └─────────────┘ └─────────────┘
            │               │               │
