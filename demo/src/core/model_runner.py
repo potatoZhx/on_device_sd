@@ -1,10 +1,9 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple, Any, Set
-from enum import Enum
+from typing import Dict, List, Optional, Any, Set
 import torch
 
-from .types import ExpertID, DeviceType
+from .types import ExpertID
 from .model import MoEConfig
 
 
@@ -60,6 +59,14 @@ class LayerOutput:
     #   "layer_time_ms": float      - 本层计算耗时
 
 
+@dataclass
+class AttentionOutput:
+    """forward_attention 的返回结果"""
+    hidden_states: torch.Tensor      # attention 后加了 residual 的 hidden_states
+    post_attn_normed: torch.Tensor   # post_attention_layernorm 后的结果（用于 routing 和 MoE）
+    residual: torch.Tensor           # MoE 之前的 residual（= hidden_states）
+
+
 # ============================================================
 # ModelRunner 抽象接口
 # ============================================================
@@ -106,6 +113,36 @@ class ModelRunner(ABC):
         ...
 
     # ----------------------------------------------------------
+    # Attention（input_norm + attn + residual + post_attn_norm）
+    # ----------------------------------------------------------
+    @abstractmethod
+    def forward_attention(
+        self,
+        layer_idx: int,
+        hidden_states: torch.Tensor,
+        kv_cache: Any,
+        positions: Optional[torch.Tensor],
+        *,
+        seq_ids: Optional[List[int]] = None,
+        is_prefill: bool = False,
+    ) -> AttentionOutput:
+        """
+        执行注意力部分（不包含 MoE）。
+
+        Args:
+            layer_idx: 当前层索引
+            hidden_states: 输入隐状态 [batch_size, seq_len, hidden_size]
+            kv_cache: KV Cache 对象（KVCache 或 PagedKVCache）
+            positions: 位置索引 [batch_size, seq_len] 或 [num_tokens]
+            seq_ids: 序列 ID 列表（用于 PagedKVCache）
+            is_prefill: 是否为 prefill 阶段
+
+        Returns:
+            AttentionOutput: attention 后输出与 post-attn norm
+        """
+        ...
+
+    # ----------------------------------------------------------
     # Routing（路由计算，与 expert 执行分离）
     # ----------------------------------------------------------
     @abstractmethod
@@ -132,40 +169,25 @@ class ModelRunner(ABC):
         ...
 
     # ----------------------------------------------------------
-    # Layer Forward（单层前向传播）
+    # MoE Forward（专家执行）
     # ----------------------------------------------------------
     @abstractmethod
-    def forward_layer(
+    def forward_moe(
         self,
         layer_idx: int,
-        hidden_states: torch.Tensor,
-        kv_cache: Any,
-        positions: torch.Tensor,
+        attn_output: AttentionOutput,
         expert_placement: ExpertPlacement,
-        *,
-        seq_ids: Optional[List[int]] = None,
-        is_prefill: bool = False,
-    ) -> LayerOutput:
+    ) -> torch.Tensor:
         """
-        执行单个 transformer decoder layer 的完整前向传播。
-
-        内部流程：
-          1. Input LayerNorm
-          2. Self-Attention + Residual
-          3. Post-Attention LayerNorm
-          4. MoE Expert Execution（根据 expert_placement）+ Residual
+        执行 MoE 部分（根据 placement 执行 expert + residual）。
 
         Args:
             layer_idx: 当前层索引
-            hidden_states: 输入隐状态 [batch_size, seq_len, hidden_size]
-            kv_cache: KV Cache 对象（KVCache 或 PagedKVCache）
-            positions: 位置索引 [batch_size, seq_len] 或 [num_tokens]
+            attn_output: forward_attention 的输出
             expert_placement: 引擎提供的 expert 执行策略
-            seq_ids: 序列 ID 列表（用于 PagedKVCache）
-            is_prefill: 是否为 prefill 阶段
 
         Returns:
-            LayerOutput: 包含 hidden_states 和 metadata
+            hidden_states: [batch_size, seq_len, hidden_size]
         """
         ...
 
@@ -184,6 +206,35 @@ class ModelRunner(ABC):
             logits: [batch_size, seq_len, vocab_size]
         """
         ...
+
+    # ----------------------------------------------------------
+    # 便捷方法：完整单层 forward（用于不需要中间调度的场景）
+    # ----------------------------------------------------------
+    def forward_layer(
+        self,
+        layer_idx: int,
+        hidden_states: torch.Tensor,
+        kv_cache: Any,
+        positions: Optional[torch.Tensor],
+        expert_placement: ExpertPlacement,
+        *,
+        seq_ids: Optional[List[int]] = None,
+        is_prefill: bool = False,
+    ) -> LayerOutput:
+        """
+        完整的单层 forward（默认实现：组合三步调用）。
+        可被子类 override 以实现 CUDA Graph 等优化。
+        """
+        attn_out = self.forward_attention(
+            layer_idx=layer_idx,
+            hidden_states=hidden_states,
+            kv_cache=kv_cache,
+            positions=positions,
+            seq_ids=seq_ids,
+            is_prefill=is_prefill,
+        )
+        moe_out = self.forward_moe(layer_idx, attn_out, expert_placement)
+        return LayerOutput(hidden_states=moe_out)
 
     # ----------------------------------------------------------
     # 可选：CUDA Graph 支持接口

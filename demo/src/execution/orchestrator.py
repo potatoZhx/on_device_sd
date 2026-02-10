@@ -9,9 +9,10 @@ from ..core.types import (
     LayerExpertActivations, DraftMetrics, VerifyResult
 )
 from ..core.model import MoEConfig
+from ..core.model_runner import ModelRunner
 from ..memory.parameter_loader import ParameterLoader
 from ..memory.expert_cache import ExpertCache
-from ..memory.kv_cache import KVCache
+from ..memory.paged_kv_cache import PagedKVCache
 from ..scheduling.prefetcher import ExpertPrefetcher
 from ..scheduling.draft_schduler import DraftSchedulingStrategy
 from .prefill_engine import PrefillEngine
@@ -20,6 +21,7 @@ from .verify_engine import VerifyEngine
 from .standard_engine import StandardDecodeEngine
 from .acceptance_strategy import AcceptanceStrategy
 from .batch_manager import BatchManager
+from ..model import Qwen3ModelRunner
 from ..utils.logger import get_logger
 from ..utils.metrics import MetricsCollector
 
@@ -42,7 +44,9 @@ class EnhancedInferenceOrchestrator:
         acceptance_strategy: AcceptanceStrategy,
         metrics_collector: Optional[MetricsCollector] = None,
         max_batch_size: int = 32,
-        default_mode: InferenceMode = InferenceMode.SPECULATIVE
+        default_mode: InferenceMode = InferenceMode.SPECULATIVE,
+        model_runner: Optional[ModelRunner] = None,
+        kv_cache_block_size: int = 256,
     ):
         self.config = config
         self.parameter_loader = parameter_loader
@@ -52,6 +56,12 @@ class EnhancedInferenceOrchestrator:
         self.acceptance_strategy = acceptance_strategy
         self.metrics = metrics_collector or MetricsCollector()
         self.default_mode = default_mode
+        self.kv_cache_block_size = kv_cache_block_size
+
+        self.model_runner = model_runner or Qwen3ModelRunner(
+            config=config,
+            parameter_loader=parameter_loader,
+        )
         
         # Initialize batch manager
         self.batch_manager = BatchManager(
@@ -60,38 +70,36 @@ class EnhancedInferenceOrchestrator:
             enable_dynamic_batching=True
         )
         
-        # Initialize standard decode engine
         self.standard_engine = StandardDecodeEngine(
-            config=config,
+            model_runner=self.model_runner,
             parameter_loader=parameter_loader,
             expert_cache=expert_cache,
             prefetcher=prefetcher,
-            metrics=self.metrics
+            metrics=self.metrics,
         )
-        
-        # Initialize speculative engines (existing)
+
         self.prefill_engine = PrefillEngine(
-            config=config,
+            model_runner=self.model_runner,
             parameter_loader=parameter_loader,
             expert_cache=expert_cache,
             prefetcher=prefetcher,
-            metrics=self.metrics
+            metrics=self.metrics,
         )
-        
+
         self.draft_engine = DraftEngine(
-            config=config,
+            model_runner=self.model_runner,
             parameter_loader=parameter_loader,
             expert_cache=expert_cache,
             draft_scheduler=draft_scheduler,
-            metrics=self.metrics
+            metrics=self.metrics,
         )
-        
+
         self.verify_engine = VerifyEngine(
-            config=config,
+            model_runner=self.model_runner,
             parameter_loader=parameter_loader,
             expert_cache=expert_cache,
             prefetcher=prefetcher,
-            metrics=self.metrics
+            metrics=self.metrics,
         )
         
         logger.info(f"EnhancedInferenceOrchestrator initialized "
@@ -229,7 +237,11 @@ class EnhancedInferenceOrchestrator:
         self.metrics.start_request(request.request_id)
         
         # Initialize KV cache
-        kv_cache = KVCache(self.config, max_batch_size=1)
+        kv_cache = PagedKVCache(
+            config=self.config,
+            block_size=self.kv_cache_block_size,
+            dtype=self.config.get_dtype(),
+        )
         
         # Phase 1: Prefill
         logger.info("=== PREFILL PHASE ===")
@@ -273,8 +285,9 @@ class EnhancedInferenceOrchestrator:
                 
                 # Update KV cache
                 kv_cache.replace_draft_with_verify(
-                    verify_cache=verify_result.new_kv_cache,
-                    num_accepted_tokens=len(accepted_tokens)
+                    seq_id=0,
+                    verify_seq_id=1,
+                    num_accepted_tokens=len(accepted_tokens),
                 )
                 
                 logger.info(f"Accepted {len(accepted_tokens)}/{len(draft_result['drafted_tokens'])} "
@@ -285,13 +298,13 @@ class EnhancedInferenceOrchestrator:
             else:
                 # Continue drafting
                 generated_ids.extend(draft_result['drafted_tokens'])
-        
+
         self.metrics.end_request(request.request_id)
         
         logger.info(f"Speculative generation complete: {len(generated_ids)} tokens")
         
         return torch.tensor(generated_ids, dtype=torch.long)
-    
+
     def _generate_batch_speculative(self, batch: BatchedRequest) -> Dict:
         """
         Speculative generation for batch.
@@ -317,18 +330,19 @@ class EnhancedInferenceOrchestrator:
     def _run_draft_phase(
         self,
         current_ids: torch.Tensor,
-        kv_cache: KVCache,
+        kv_cache,
         config: GenerationConfig
     ) -> Dict:
         """Execute draft phase (existing logic)"""
         logger.info("--- Draft Phase ---")
-        kv_cache.backup_for_draft()
+        kv_cache.start_draft(seq_id=0)
         
         draft_output = self.draft_engine.forward(
             input_ids=current_ids[-1:],
             kv_cache=kv_cache,
             max_draft_tokens=config.max_draft_tokens,
-            temperature=config.temperature
+            temperature=config.temperature,
+            seq_ids=[0],
         )
         
         return draft_output
@@ -337,7 +351,7 @@ class EnhancedInferenceOrchestrator:
         self,
         prefill_ids: torch.Tensor,
         draft_tokens: List[int],
-        kv_cache: KVCache,
+        kv_cache,
         config: GenerationConfig
     ):
         """Execute verify phase (existing logic)"""
@@ -350,16 +364,19 @@ class EnhancedInferenceOrchestrator:
             torch.tensor(draft_tokens, dtype=torch.long)
         ])
         
-        verify_kv_cache = KVCache(self.config, max_batch_size=1)
+        verify_kv_cache = kv_cache
         
         verify_output = self.verify_engine.forward(
             input_ids=all_ids,
-            kv_cache=verify_kv_cache
+            kv_cache=verify_kv_cache,
+            seq_ids=[1],
         )
         
         verify_logits = verify_output['logits']
+        if verify_logits.dim() == 3:
+            verify_logits = verify_logits[:, -len(draft_tokens):, :][0]
         draft_token_ids = torch.tensor(draft_tokens, dtype=torch.long)
-        
+
         acceptance_result = self.acceptance_strategy.accept(
             draft_token_ids=draft_token_ids,
             verify_logits=verify_logits[-len(draft_tokens):],
@@ -413,7 +430,9 @@ class InferenceOrchestrator:
         prefetcher: ExpertPrefetcher,
         draft_scheduler: DraftSchedulingStrategy,
         acceptance_strategy: AcceptanceStrategy,
-        metrics_collector: Optional[MetricsCollector] = None
+        metrics_collector: Optional[MetricsCollector] = None,
+        model_runner: Optional[ModelRunner] = None,
+        kv_cache_block_size: int = 256,
     ):
         self.config = config
         self.parameter_loader = parameter_loader
@@ -422,34 +441,39 @@ class InferenceOrchestrator:
         self.draft_scheduler = draft_scheduler
         self.acceptance_strategy = acceptance_strategy
         self.metrics = metrics_collector or MetricsCollector()
-        
-        # Initialize engines
-        self.prefill_engine = PrefillEngine(
+        self.kv_cache_block_size = kv_cache_block_size
+        self.model_runner = model_runner or Qwen3ModelRunner(
             config=config,
+            parameter_loader=parameter_loader,
+        )
+        
+        # Initialize engines (new implementation)
+        self.prefill_engine = PrefillEngine(
+            model_runner=self.model_runner,
             parameter_loader=parameter_loader,
             expert_cache=expert_cache,
             prefetcher=prefetcher,
-            metrics=self.metrics
+            metrics=self.metrics,
         )
         
         self.draft_engine = DraftEngine(
-            config=config,
+            model_runner=self.model_runner,
             parameter_loader=parameter_loader,
             expert_cache=expert_cache,
             draft_scheduler=draft_scheduler,
-            metrics=self.metrics
+            metrics=self.metrics,
         )
-        # TODO: 为什么不用acceptance_strategy
+
         self.verify_engine = VerifyEngine(
-            config=config,
+            model_runner=self.model_runner,
             parameter_loader=parameter_loader,
             expert_cache=expert_cache,
             prefetcher=prefetcher,
-            metrics=self.metrics
+            metrics=self.metrics,
         )
         
         # KV cache
-        self.kv_cache: Optional[KVCache] = None
+        self.kv_cache: Optional[PagedKVCache] = None
         
         # Current phase
         self.current_phase = ExecutionPhase.PREFILL
@@ -473,7 +497,11 @@ class InferenceOrchestrator:
         self.metrics.start_request(request.request_id)
         
         # Initialize KV cache
-        self.kv_cache = KVCache(self.config, max_batch_size=1)
+        self.kv_cache = PagedKVCache(
+            config=self.config,
+            block_size=self.kv_cache_block_size,
+            dtype=self.config.get_dtype(),
+        )
         
         # Phase 1: Prefill
         logger.info("=== PREFILL PHASE ===")
@@ -517,8 +545,9 @@ class InferenceOrchestrator:
                 
                 # Update KV cache
                 self.kv_cache.replace_draft_with_verify(
-                    verify_cache=verify_result.new_kv_cache,
-                    num_accepted_tokens=len(accepted_tokens)
+                    seq_id=0,
+                    verify_seq_id=1,
+                    num_accepted_tokens=len(accepted_tokens),
                 )
                 
                 logger.info(f"Accepted {len(accepted_tokens)}/{len(draft_result['drafted_tokens'])} "
@@ -550,15 +579,16 @@ class InferenceOrchestrator:
         logger.info("--- Draft Phase ---")
         self.current_phase = ExecutionPhase.DRAFT
         
-        # Backup KV cache before drafting
-        self.kv_cache.backup_for_draft()
+        # Mark draft phase
+        self.kv_cache.start_draft(seq_id=0)
         
         # Run draft engine
         draft_output = self.draft_engine.forward(
             input_ids=current_ids[-1:],  # Only last token
             kv_cache=self.kv_cache,
             max_draft_tokens=self.config.max_draft_tokens,
-            temperature=request.temperature
+            temperature=request.temperature,
+            seq_ids=[0],
         )
         
         return draft_output
@@ -584,17 +614,18 @@ class InferenceOrchestrator:
             torch.tensor(draft_tokens, dtype=torch.long)
         ])
         
-        # Create new KV cache for verification
-        verify_kv_cache = KVCache(self.config, max_batch_size=1)
-        
-        # Run verify engine (full model inference)
+        # Run verify engine (full model inference) on same cache with new seq_id
+        verify_kv_cache = self.kv_cache
         verify_output = self.verify_engine.forward(
             input_ids=all_ids,
-            kv_cache=verify_kv_cache
+            kv_cache=verify_kv_cache,
+            seq_ids=[1],
         )
         
         # Run acceptance strategy
-        verify_logits = verify_output['logits']  # [seq_len, vocab_size]
+        verify_logits = verify_output['logits']
+        if verify_logits.dim() == 3:
+            verify_logits = verify_logits[:, -len(draft_tokens):, :][0]
         draft_token_ids = torch.tensor(draft_tokens, dtype=torch.long)
         
         acceptance_result = self.acceptance_strategy.accept(

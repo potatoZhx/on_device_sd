@@ -1,71 +1,48 @@
 from typing import Dict, Optional
 import torch
-from ..core.model import MoEConfig
-from ..memory.parameter_loader import ParameterLoader
+
+from ..core.model_runner import ModelRunner
 from ..memory.expert_cache import ExpertCache
-from ..memory.kv_cache import KVCache
+from ..memory.parameter_loader import ParameterLoader
 from ..scheduling.prefetcher import ExpertPrefetcher
 from ..utils.logger import get_logger
 from ..utils.metrics import MetricsCollector
+from .prefill_engine import PrefillEngine
 
 logger = get_logger(__name__)
 
 
 class VerifyEngine:
     """
-    Verify phase execution engine.
-    Performs full model inference similar to prefill, but on draft tokens.
+    Verify phase execution engine using ModelRunner.
     """
-    
+
     def __init__(
         self,
-        config: MoEConfig,
+        model_runner: ModelRunner,
         parameter_loader: ParameterLoader,
         expert_cache: ExpertCache,
-        prefetcher: ExpertPrefetcher,
-        metrics: MetricsCollector
+        prefetcher: Optional[ExpertPrefetcher],
+        metrics: MetricsCollector,
     ):
-        self.config = config
-        self.parameter_loader = parameter_loader
-        self.expert_cache = expert_cache
-        self.prefetcher = prefetcher
-        self.metrics = metrics
-        
-        # Reuse prefill engine logic
-        from .prefill_engine import PrefillEngine
+        self.model_runner = model_runner
         self.prefill_engine = PrefillEngine(
-            config=config,
+            model_runner=model_runner,
             parameter_loader=parameter_loader,
             expert_cache=expert_cache,
             prefetcher=prefetcher,
-            metrics=metrics
+            metrics=metrics,
         )
-    
-    def forward(
-        self,
-        input_ids: torch.Tensor,
-        kv_cache: KVCache
-    ) -> Dict:
-        """
-        Verify draft tokens with full model inference.
-        
-        Args:
-            input_ids: All tokens (prefill + draft) [batch, seq_len]
-            kv_cache: Fresh KV cache for verification
-        
-        Returns:
-            Dict with 'logits' for all positions
-        """
+        self.metrics = metrics
+
+    def forward(self, input_ids: torch.Tensor, kv_cache, seq_ids: Optional[list[int]] = None) -> Dict:
         self.metrics.start_phase('verify')
-        
         logger.info(f"Verifying {input_ids.shape[1]} tokens")
-        
-        # Use prefill engine for full inference
         output = self.prefill_engine.forward(
             input_ids=input_ids,
-            kv_cache=kv_cache
+            kv_cache=kv_cache,
+            seq_ids=seq_ids,
+            is_prefill=True,
         )
-        
         self.metrics.end_phase('verify')
-        
         return output

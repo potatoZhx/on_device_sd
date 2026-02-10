@@ -4,15 +4,18 @@ import torch
 import torch.nn.functional as F
 from typing import Dict, List, Optional, Any, Set
 
-from ..core.model_runner import ModelRunner, RoutingResult, ExpertPlacement, LayerOutput
+from ..core.model_runner import (
+    ModelRunner,
+    RoutingResult,
+    ExpertPlacement,
+    LayerOutput,
+    AttentionOutput,
+)
 from ..core.model import MoEConfig
 from ..core.types import ExpertID
 from ..memory.parameter_loader import ParameterLoader
-from ..memory.expert_cache import ExpertCache
 from ..layers import (
     Qwen3DecoderLayer,
-    Qwen3Attention,
-    Qwen3MoELayer,
     RMSNorm,
     expert_forward_with_weights,
 )
@@ -111,23 +114,41 @@ class Qwen3ModelRunner(ModelRunner):
             activated_expert_ids=activated,
         )
 
-    def forward_layer(
+    def forward_attention(
         self,
         layer_idx: int,
         hidden_states: torch.Tensor,
         kv_cache: Any,
-        positions: torch.Tensor,
-        expert_placement: ExpertPlacement,
+        positions: Optional[torch.Tensor],
         *,
         seq_ids: Optional[List[int]] = None,
         is_prefill: bool = False,
-    ) -> LayerOutput:
+    ) -> AttentionOutput:
         """
-        执行单层 transformer decoder layer。
-        Attention 部分使用 layers/ 的内部实现；
-        MoE 部分根据 expert_placement 在 CPU/GPU 上执行。
+        执行 attention 部分（input_norm + attn + residual + post_attn_norm）。
         """
         layer = self.layers[layer_idx]
+
+        # 初始化 seq_ids
+        if hidden_states.dim() == 3:
+            batch_size, seq_len, hidden_size = hidden_states.shape
+        else:
+            batch_size, seq_len = 1, hidden_states.shape[0]
+            hidden_size = hidden_states.shape[-1]
+
+        if seq_ids is None:
+            seq_ids = list(range(batch_size))
+
+        # PagedKVCache 需要提前创建/扩展 sequence
+        if hasattr(kv_cache, "sequences") and hasattr(kv_cache, "add_sequence"):
+            if is_prefill:
+                for seq_id in seq_ids:
+                    if seq_id not in kv_cache.sequences:
+                        kv_cache.add_sequence(seq_id, prompt_len=seq_len)
+            else:
+                for seq_id in seq_ids:
+                    if seq_id not in kv_cache.sequences:
+                        kv_cache.add_sequence(seq_id, prompt_len=1)
 
         # ---- 1. Input LayerNorm ----
         residual = hidden_states
@@ -136,18 +157,29 @@ class Qwen3ModelRunner(ModelRunner):
         # ---- 2. Self-Attention ----
         # 适配维度
         if hidden_states.dim() == 3:
-            batch_size, seq_len, hidden_size = hidden_states.shape
             hidden_states_flat = hidden_states.reshape(-1, hidden_size)
+            if positions is None:
+                if is_prefill:
+                    positions = torch.arange(seq_len, device=hidden_states.device).unsqueeze(0).expand(batch_size, -1)
+                elif hasattr(kv_cache, "sequences"):
+                    pos_vals = [kv_cache.sequences[seq_id].num_tokens - 1 for seq_id in seq_ids]
+                    positions = torch.tensor(pos_vals, device=hidden_states.device).unsqueeze(1)
+                else:
+                    positions = torch.zeros((batch_size, seq_len), device=hidden_states.device, dtype=torch.long)
             positions_flat = positions.reshape(-1) if positions is not None else None
             reshape_back = True
         else:
-            batch_size, seq_len = 1, hidden_states.shape[0]
             hidden_states_flat = hidden_states
-            positions_flat = positions
+            if positions is None:
+                if is_prefill:
+                    positions_flat = torch.arange(hidden_states_flat.shape[0], device=hidden_states.device)
+                elif hasattr(kv_cache, "sequences") and seq_ids:
+                    positions_flat = torch.tensor([kv_cache.sequences[seq_ids[0]].num_tokens - 1], device=hidden_states.device)
+                else:
+                    positions_flat = torch.zeros(hidden_states_flat.shape[0], device=hidden_states.device, dtype=torch.long)
+            else:
+                positions_flat = positions
             reshape_back = False
-
-        if seq_ids is None:
-            seq_ids = list(range(batch_size))
 
         attn_output = layer.self_attn(
             hidden_states=hidden_states_flat,
@@ -163,18 +195,52 @@ class Qwen3ModelRunner(ModelRunner):
         hidden_states = residual + attn_output
 
         # ---- 3. Post-Attention LayerNorm ----
-        residual = hidden_states
         normed = layer.post_attention_layernorm(hidden_states)
 
-        # ---- 4. MoE Expert Execution（根据 placement）----
+        return AttentionOutput(
+            hidden_states=hidden_states,
+            post_attn_normed=normed,
+            residual=hidden_states,
+        )
+
+    def forward_moe(
+        self,
+        layer_idx: int,
+        attn_output: AttentionOutput,
+        expert_placement: ExpertPlacement,
+    ) -> torch.Tensor:
+        """
+        执行 MoE 部分（根据 placement 执行 expert + residual）。
+        """
         moe_output = self._execute_moe_with_placement(
-            hidden_states=normed,
+            hidden_states=attn_output.post_attn_normed,
             expert_placement=expert_placement,
         )
 
-        hidden_states = residual + moe_output
+        return attn_output.residual + moe_output
 
-        # ---- 收集 metadata ----
+    def forward_layer(
+        self,
+        layer_idx: int,
+        hidden_states: torch.Tensor,
+        kv_cache: Any,
+        positions: Optional[torch.Tensor],
+        expert_placement: ExpertPlacement,
+        *,
+        seq_ids: Optional[List[int]] = None,
+        is_prefill: bool = False,
+    ) -> LayerOutput:
+        """完整单层 forward，包含 metadata。"""
+        attn_out = self.forward_attention(
+            layer_idx=layer_idx,
+            hidden_states=hidden_states,
+            kv_cache=kv_cache,
+            positions=positions,
+            seq_ids=seq_ids,
+            is_prefill=is_prefill,
+        )
+        hidden_states = self.forward_moe(layer_idx, attn_out, expert_placement)
+
         metadata = {
             "gpu_expert_count": len(expert_placement.gpu_expert_params),
             "cpu_expert_count": len(expert_placement.cpu_expert_params),
@@ -219,10 +285,6 @@ class Qwen3ModelRunner(ModelRunner):
         topk_scores = routing.topk_scores
 
         final_output = torch.zeros(flat.shape[0], h, device=flat.device, dtype=flat.dtype)
-
-        # 合并 gpu + cpu + substitution 的所有 expert params
-        all_experts = {}
-        all_experts.update(expert_placement.gpu_expert_params)
 
         # 处理替换映射
         sub_map = expert_placement.substitution_map
@@ -294,4 +356,6 @@ class Qwen3ModelRunner(ModelRunner):
                 post_attention_layernorm_weight=static_params[f"{prefix}.post_attention_layernorm"],
                 gate_weight=static_params[f"{prefix}.router"],
             )
+        if "final_layernorm" in static_params:
+            self.final_norm.weight.data = static_params["final_layernorm"].to(self.final_norm.weight.dtype)
         logger.info("Static weights loaded into Qwen3ModelRunner layers")

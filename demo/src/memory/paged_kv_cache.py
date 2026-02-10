@@ -415,11 +415,7 @@ class PagedKVCache:
         # Get cache for this layer
         k_cache = self.kv_cache[0, layer_idx]  # [num_blocks, block_size, D]
         v_cache = self.kv_cache[1, layer_idx]
-        
-        # Reshape cache for triton kernel
-        k_cache = k_cache.view(-1, self.num_kv_heads * self.head_dim)
-        v_cache = v_cache.view(-1, self.num_kv_heads * self.head_dim)
-        
+
         # Store using triton kernel
         store_kvcache(key, value, k_cache, v_cache, slot_mapping_tensor)
     

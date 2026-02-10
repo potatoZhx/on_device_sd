@@ -7,6 +7,8 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 from typing import Optional, Tuple
+import triton
+import triton.language as tl
 
 # 尝试导入 flash_attn，如果不可用则使用普通实现
 try:
@@ -21,10 +23,60 @@ except (ImportError, OSError) as e:
 
 from .rotary_embedding import get_rope
 from .layernorm import RMSNorm
-from ..memory.paged_kv_cache import PagedKVCache, store_kvcache
+from ..memory.paged_kv_cache import PagedKVCache
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+@triton.jit
+def store_kvcache_kernel(
+    key_ptr,
+    key_stride,
+    value_ptr,
+    value_stride,
+    k_cache_ptr,
+    v_cache_ptr,
+    slot_mapping_ptr,
+    D: tl.constexpr,
+):
+    idx = tl.program_id(0)
+    slot = tl.load(slot_mapping_ptr + idx)
+    if slot == -1:
+        return
+    key_offsets = idx * key_stride + tl.arange(0, D)
+    value_offsets = idx * value_stride + tl.arange(0, D)
+    key = tl.load(key_ptr + key_offsets)
+    value = tl.load(value_ptr + value_offsets)
+    cache_offsets = slot * D + tl.arange(0, D)
+    tl.store(k_cache_ptr + cache_offsets, key)
+    tl.store(v_cache_ptr + cache_offsets, value)
+
+
+def store_kvcache(
+    key: torch.Tensor,
+    value: torch.Tensor,
+    k_cache: torch.Tensor,
+    v_cache: torch.Tensor,
+    slot_mapping: torch.Tensor,
+):
+    N, num_heads, head_dim = key.shape
+    D = num_heads * head_dim
+    assert key.stride(-1) == 1 and value.stride(-1) == 1
+    assert key.stride(1) == head_dim and value.stride(1) == head_dim
+    assert k_cache.stride(-1) == 1 and v_cache.stride(-1) == 1
+    assert k_cache.stride(-2) == D and v_cache.stride(-2) == D
+    assert slot_mapping.numel() == N
+    store_kvcache_kernel[(N,)](
+        key,
+        key.stride(0),
+        value,
+        value.stride(0),
+        k_cache,
+        v_cache,
+        slot_mapping,
+        D,
+    )
 
 
 class Qwen3Attention(nn.Module):
@@ -159,13 +211,9 @@ class Qwen3Attention(nn.Module):
         context = kv_cache.get_attention_context(seq_ids, is_prefill)
         k_cache_layer, v_cache_layer = kv_cache.get_kv_cache_for_layer(self.layer_idx)
         
-        # Reshape cache for storage
-        k_cache_flat = k_cache_layer.view(-1, self.num_kv_heads * self.head_dim)
-        v_cache_flat = v_cache_layer.view(-1, self.num_kv_heads * self.head_dim)
-        
         # Store current KV
         if context['slot_mapping'].numel() > 0:
-            store_kvcache(k, v, k_cache_flat, v_cache_flat, context['slot_mapping'])
+            store_kvcache(k, v, k_cache_layer, v_cache_layer, context['slot_mapping'])
         
         # Compute attention using flash_attn
         if is_prefill:
@@ -181,10 +229,23 @@ class Qwen3Attention(nn.Module):
             )
         else:
             # Decode: use kvcache API
+            # flash_attn_with_kvcache expects KV cache in [num_blocks, block_size, num_kv_heads, head_dim]
+            k_cache_view = k_cache_layer.view(
+                k_cache_layer.shape[0],
+                k_cache_layer.shape[1],
+                self.num_kv_heads,
+                self.head_dim,
+            )
+            v_cache_view = v_cache_layer.view(
+                v_cache_layer.shape[0],
+                v_cache_layer.shape[1],
+                self.num_kv_heads,
+                self.head_dim,
+            )
             attn_output = flash_attn_with_kvcache(
                 q.unsqueeze(1),  # [num_tokens, 1, num_heads, head_dim]
-                k_cache_layer,
-                v_cache_layer,
+                k_cache_view,
+                v_cache_view,
                 cache_seqlens=context['context_lens'],
                 block_table=context['block_tables'],
                 softmax_scale=self.scaling,
