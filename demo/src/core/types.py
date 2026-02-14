@@ -69,6 +69,7 @@ class InferenceRequest:
     temperature: float = 1.0
     top_p: float = 1.0
     top_k: int = 50
+    generation_config: Optional["GenerationConfig"] = None
 
 @dataclass
 class DraftMetrics:

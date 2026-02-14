@@ -355,11 +355,8 @@ class Qwen3AttentionWithWeights:
         k_cache_layer, v_cache_layer = kv_cache.get_kv_cache_for_layer(self.layer_idx)
         
         # Store KV in cache
-        k_cache_flat = k_cache_layer.view(-1, self.num_kv_heads * self.head_dim)
-        v_cache_flat = v_cache_layer.view(-1, self.num_kv_heads * self.head_dim)
-        
         if context['slot_mapping'].numel() > 0:
-            store_kvcache(k, v, k_cache_flat, v_cache_flat, context['slot_mapping'])
+            store_kvcache(k, v, k_cache_layer, v_cache_layer, context['slot_mapping'])
         
         # Compute attention
         if is_prefill:
@@ -373,10 +370,22 @@ class Qwen3AttentionWithWeights:
                 causal=True,
             )
         else:
+            k_cache_view = k_cache_layer.view(
+                k_cache_layer.shape[0],
+                k_cache_layer.shape[1],
+                self.num_kv_heads,
+                self.head_dim,
+            )
+            v_cache_view = v_cache_layer.view(
+                v_cache_layer.shape[0],
+                v_cache_layer.shape[1],
+                self.num_kv_heads,
+                self.head_dim,
+            )
             attn_output = flash_attn_with_kvcache(
                 q.unsqueeze(1),
-                k_cache_layer,
-                v_cache_layer,
+                k_cache_view,
+                v_cache_view,
                 cache_seqlens=context['context_lens'],
                 block_table=context['block_tables'],
                 softmax_scale=self.scaling,

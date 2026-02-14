@@ -1,0 +1,31 @@
+# Model Architecture Configuration (test/default)
+
+hidden_size: 128
+num_hidden_layers: 2
+num_attention_heads: 4
+num_key_value_heads: 2
+head_dim: 32
+intermediate_size: 256
+vocab_size: 1000
+
+# MoE specific
+num_experts: 4
+num_experts_per_token: 2
+num_shared_experts: 0
+moe_intermediate_size: 64
+
+# Position
+max_position_embeddings: 256
+rope_theta: 10000.0
+
+# Norm
+rms_norm_eps: 1.0e-6
+
+# Draft-verify
+draft_top_c: 1
+max_draft_tokens: 4
+verify_threshold_perplexity: 1.5
+
+# dtype
+torch_dtype: float16
+model_type: qwen3_moe

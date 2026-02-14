@@ -289,7 +289,8 @@ class Qwen3ModelRunner(ModelRunner):
         # 处理替换映射
         sub_map = expert_placement.substitution_map
 
-        for expert_idx in range(self.config.num_experts):
+        for expert_id in routing.activated_expert_ids:
+            expert_idx = expert_id.expert_idx
             expert_mask = (topk_indices == expert_idx)
             token_expert_pairs = torch.where(expert_mask)
             token_indices = token_expert_pairs[0]

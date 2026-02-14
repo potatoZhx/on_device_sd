@@ -150,6 +150,11 @@ class EnhancedInferenceOrchestrator:
         # Determine inference mode
         inference_mode = mode or self.default_mode
         
+        # Normalize generation configs for requests
+        for req in batch.requests:
+            if getattr(req, "generation_config", None) is None:
+                req.generation_config = self._get_generation_config(req)
+
         # Check if all requests want the same mode
         if all(req.generation_config.use_speculative for req in batch.requests):
             inference_mode = InferenceMode.SPECULATIVE
@@ -172,6 +177,18 @@ class EnhancedInferenceOrchestrator:
         )
         
         return responses
+
+    def _get_generation_config(self, request: InferenceRequest) -> GenerationConfig:
+        if getattr(request, "generation_config", None) is not None:
+            return request.generation_config
+        return GenerationConfig(
+            max_new_tokens=request.max_new_tokens,
+            temperature=request.temperature,
+            top_p=request.top_p,
+            top_k=request.top_k,
+            do_sample=True,
+            use_speculative=self.default_mode == InferenceMode.SPECULATIVE,
+        )
     
     def generate(
         self,
@@ -208,6 +225,8 @@ class EnhancedInferenceOrchestrator:
         logger.info(f"Starting standard generation for request {request.request_id}")
         self.metrics.start_request(request.request_id)
         
+        request.generation_config = self._get_generation_config(request)
+
         # Create single-request batch
         batch = self._create_single_request_batch(request)
         
@@ -254,14 +273,16 @@ class EnhancedInferenceOrchestrator:
         
         # Phase 2: Decode (Draft-Verify loop)
         logger.info("=== DECODE PHASE ===")
-        max_new_tokens = request.generation_config.max_new_tokens
+        gen_config = self._get_generation_config(request)
+        request.generation_config = gen_config
+        max_new_tokens = gen_config.max_new_tokens
         
         while len(generated_ids) < max_new_tokens:
             # Draft phase
             draft_result = self._run_draft_phase(
                 current_ids=torch.tensor(generated_ids, dtype=torch.long),
                 kv_cache=kv_cache,
-                config=request.generation_config
+                config=gen_config
             )
             
             # Check if should verify
@@ -269,14 +290,14 @@ class EnhancedInferenceOrchestrator:
                 num_drafted_tokens=len(draft_result['drafted_tokens']),
                 perplexity=draft_result['metrics'].perplexity,
                 cache_hit_rate=draft_result['metrics'].expert_hit_rate,
-                max_draft_tokens=request.generation_config.max_draft_tokens
+                max_draft_tokens=gen_config.max_draft_tokens
             ):
                 # Verify phase
                 verify_result = self._run_verify_phase(
                     prefill_ids=request.input_ids,
                     draft_tokens=draft_result['drafted_tokens'],
                     kv_cache=kv_cache,
-                    config=request.generation_config
+                    config=gen_config
                 )
                 
                 # Accept tokens

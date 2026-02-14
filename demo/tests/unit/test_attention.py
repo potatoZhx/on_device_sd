@@ -142,7 +142,7 @@ class TestQwen3Attention:
         ).cuda().to(torch.bfloat16)
         
         # Create KV cache with bf16
-        kv_cache = PagedKVCache(config=config, block_size=16, dtype=torch.bfloat16)
+        kv_cache = PagedKVCache(config=config, block_size=256, dtype=torch.bfloat16)
         kv_cache.add_sequence(seq_id=0, prompt_len=10)
         
         # Create dummy input (must be fp16 or bf16 for flash_attn)

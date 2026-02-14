@@ -43,8 +43,9 @@ class RotaryEmbedding(nn.Module):
         sin = freqs.sin()
         cache = torch.cat((cos, sin), dim=-1).unsqueeze_(1)
         self.register_buffer("cos_sin_cache", cache, persistent=False)
+        self.register_buffer("cos_cache", cos, persistent=False)
+        self.register_buffer("sin_cache", sin, persistent=False)
 
-    @torch.compile
     def forward(
         self,
         positions: torch.Tensor,
