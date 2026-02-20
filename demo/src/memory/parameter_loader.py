@@ -6,6 +6,8 @@
 import os
 import json
 import re
+import threading
+import concurrent.futures
 from glob import glob
 from typing import Dict, List, Optional, Set, Tuple, Any
 import torch
@@ -435,15 +437,23 @@ class ParameterLoader:
                    f"skipping {len(self.shared_expert_ids)} shared experts)...")
         
         total_loaded = 0
+        expert_tasks: List[Tuple[int, int]] = []
         for layer_idx in range(self.config.num_hidden_layers):
             for expert_idx in range(self.config.num_experts):
                 expert_id = ExpertID(layer_idx, expert_idx)
-                
-                # 跳过 shared experts（它们已经在 GPU 上）
                 if expert_id in self.shared_expert_ids:
                     logger.debug(f"Skipping shared expert {expert_id}")
                     continue
-                
+                expert_tasks.append((layer_idx, expert_idx))
+        
+        if not expert_tasks:
+            logger.info("No routed experts to load")
+            return
+        
+        max_workers = min(8, os.cpu_count() or 4)
+        if max_workers <= 1:
+            for layer_idx, expert_idx in expert_tasks:
+                expert_id = ExpertID(layer_idx, expert_idx)
                 expert_weights = self._load_single_expert(layer_idx, expert_idx, device='cpu')
                 if expert_weights:
                     self.expert_params_cpu[expert_id] = expert_weights
@@ -453,6 +463,51 @@ class ParameterLoader:
                         is_cached=False
                     )
                     total_loaded += 1
+            logger.info(f"Loaded {total_loaded} routed experts to CPU")
+            return
+        
+        thread_local = threading.local()
+        
+        def get_loader() -> SafetensorsWeightLoader:
+            if not hasattr(thread_local, "loader"):
+                thread_local.loader = SafetensorsWeightLoader(
+                    self.model_path, device="cpu", use_pin_memory=self.use_pin_memory
+                )
+            return thread_local.loader
+        
+        def load_one(task: Tuple[int, int]) -> Optional[Tuple[ExpertID, Dict[str, torch.Tensor]]]:
+            layer_idx, expert_idx = task
+            expert_prefix = f"model.layers.{layer_idx}.mlp.experts.{expert_idx}"
+            proj_names = ['gate_proj', 'up_proj', 'down_proj']
+            use_pin = self.use_pin_memory
+            loader = get_loader()
+            weights: Dict[str, torch.Tensor] = {}
+            try:
+                for proj in proj_names:
+                    weight_name = f"{expert_prefix}.{proj}.weight"
+                    if loader.has_weight(weight_name):
+                        weights[proj] = loader.get_tensor(
+                            weight_name, device='cpu', pin_memory=use_pin
+                        )
+                    else:
+                        return None
+                return ExpertID(layer_idx, expert_idx), weights
+            except Exception as exc:
+                logger.warning(f"Failed to load expert {layer_idx}:{expert_idx}: {exc}")
+                return None
+        
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            for result in executor.map(load_one, expert_tasks, chunksize=4):
+                if not result:
+                    continue
+                expert_id, expert_weights = result
+                self.expert_params_cpu[expert_id] = expert_weights
+                self.expert_locations[expert_id] = ExpertLocation(
+                    expert_id=expert_id,
+                    device=DeviceType.CPU,
+                    is_cached=False
+                )
+                total_loaded += 1
         
         logger.info(f"Loaded {total_loaded} routed experts to CPU")
     

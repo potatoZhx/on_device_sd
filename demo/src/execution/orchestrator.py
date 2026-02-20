@@ -1,4 +1,5 @@
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Union
+import time
 import torch
 from enum import Enum
 
@@ -147,27 +148,7 @@ class EnhancedInferenceOrchestrator:
         if batch is None:
             return []
         
-        # Determine inference mode
-        inference_mode = mode or self.default_mode
-        
-        # Normalize generation configs for requests
-        for req in batch.requests:
-            if getattr(req, "generation_config", None) is None:
-                req.generation_config = self._get_generation_config(req)
-
-        # Check if all requests want the same mode
-        if all(req.generation_config.use_speculative for req in batch.requests):
-            inference_mode = InferenceMode.SPECULATIVE
-        elif not any(req.generation_config.use_speculative for req in batch.requests):
-            inference_mode = InferenceMode.STANDARD
-        
-        logger.info(f"Processing batch {batch.batch_id} with mode={inference_mode.value}")
-        
-        # Route to appropriate engine
-        if inference_mode == InferenceMode.STANDARD:
-            result = self.standard_engine.generate_batch(batch)
-        else:
-            result = self._generate_batch_speculative(batch)
+        result = self._execute_batch(batch, mode=mode)
         
         # Complete batch and generate responses
         responses = self.batch_manager.complete_batch(
@@ -192,54 +173,25 @@ class EnhancedInferenceOrchestrator:
     
     def generate(
         self,
-        request: InferenceRequest,
+        requests: Union[InferenceRequest, List[InferenceRequest]],
         mode: Optional[InferenceMode] = None
-    ) -> torch.Tensor:
-        """
-        Synchronous generation for single request (for compatibility).
+    ) -> List[torch.Tensor]:
+        if not isinstance(requests, list):
+            requests = [requests]
         
-        Args:
-            request: Inference request
-            mode: Inference mode
+        if not requests:
+            return []
         
-        Returns:
-            Generated token IDs
-        """
-        inference_mode = mode or self.default_mode
+        for req in requests:
+            self.metrics.start_request(req.request_id)
         
-        if inference_mode == InferenceMode.STANDARD:
-            return self._generate_standard(request)
-        else:
-            return self._generate_speculative(request)
-    
-    def _generate_standard(self, request: InferenceRequest) -> torch.Tensor:
-        """
-        Standard autoregressive generation for single request.
+        batch = self._create_batch_from_requests(requests)
+        result = self._execute_batch(batch, mode=mode)
         
-        Args:
-            request: Inference request
+        for req in requests:
+            self.metrics.end_request(req.request_id)
         
-        Returns:
-            Generated token IDs
-        """
-        logger.info(f"Starting standard generation for request {request.request_id}")
-        self.metrics.start_request(request.request_id)
-        
-        request.generation_config = self._get_generation_config(request)
-
-        # Create single-request batch
-        batch = self._create_single_request_batch(request)
-        
-        # Generate
-        result = self.standard_engine.generate_batch(batch)
-        
-        self.metrics.end_request(request.request_id)
-        
-        generated_ids = result['generated_sequences'][0]
-        
-        logger.info(f"Standard generation complete: {len(generated_ids)} tokens")
-        
-        return generated_ids
+        return result['generated_sequences']
     
     def _generate_speculative(self, request: InferenceRequest) -> torch.Tensor:
         """
@@ -411,21 +363,60 @@ class EnhancedInferenceOrchestrator:
             should_continue=True
         )
     
-    def _create_single_request_batch(self, request: InferenceRequest) -> BatchedRequest:
-        """Create a batch containing a single request"""
-        input_ids = request.input_ids.unsqueeze(0)  # [1, seq_len]
-        seq_len = len(request.input_ids)
+    def _execute_batch(
+        self,
+        batch: BatchedRequest,
+        mode: Optional[InferenceMode] = None
+    ) -> Dict:
+        inference_mode = mode or self.default_mode
+        
+        for req in batch.requests:
+            if getattr(req, "generation_config", None) is None:
+                req.generation_config = self._get_generation_config(req)
+        
+        if all(req.generation_config.use_speculative for req in batch.requests):
+            inference_mode = InferenceMode.SPECULATIVE
+        elif not any(req.generation_config.use_speculative for req in batch.requests):
+            inference_mode = InferenceMode.STANDARD
+        
+        logger.info(f"Processing batch {batch.batch_id} with mode={inference_mode.value}")
+        
+        if inference_mode == InferenceMode.STANDARD:
+            return self.standard_engine.generate_batch(batch)
+        
+        return self._generate_batch_speculative(batch)
+    
+    def _create_batch_from_requests(self, requests: List[InferenceRequest]) -> BatchedRequest:
+        batch_size = len(requests)
+        max_seq_len = max(len(req.input_ids) for req in requests)
+        padding_token_id = self.batch_manager.padding_token_id
+        
+        input_ids = torch.full(
+            (batch_size, max_seq_len),
+            padding_token_id,
+            dtype=torch.long
+        )
+        attention_mask = torch.zeros(batch_size, max_seq_len, dtype=torch.long)
+        position_ids = torch.zeros(batch_size, max_seq_len, dtype=torch.long)
+        
+        for i, request in enumerate(requests):
+            seq_len = len(request.input_ids)
+            input_ids[i, :seq_len] = request.input_ids
+            attention_mask[i, :seq_len] = 1
+            position_ids[i, :seq_len] = torch.arange(seq_len)
+        
+        batch_id = f"batch_{int(time.time() * 1000)}_{id(requests[0])}"
         
         return BatchedRequest(
-            batch_id=f"single_{request.request_id}",
-            requests=[request],
+            batch_id=batch_id,
+            requests=requests,
             input_ids=input_ids,
-            attention_mask=torch.ones(1, seq_len, dtype=torch.long),
-            position_ids=torch.arange(seq_len).unsqueeze(0),
-            current_lengths=[seq_len],
-            finished=[False],
-            max_batch_seq_len=seq_len,
-            padding_token_id=0
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            current_lengths=[len(req.input_ids) for req in requests],
+            finished=[False] * batch_size,
+            max_batch_seq_len=max_seq_len,
+            padding_token_id=padding_token_id
         )
     
     def get_statistics(self) -> Dict:

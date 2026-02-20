@@ -180,7 +180,7 @@ class MoEInferenceEngine:
     
     def generate(
         self,
-        prompt: Union[str, List[int]],
+        prompt: Union[str, List[int], List[str], List[List[int]]],
         max_new_tokens: int = 100,
         temperature: float = 1.0,
         top_p: float = 1.0,
@@ -188,12 +188,12 @@ class MoEInferenceEngine:
         mode: Optional[InferenceMode] = None,
         stream: bool = False,
         **kwargs
-    ) -> Union[List[int], InferenceResponse]:
+    ) -> Union[List[int], List[List[int]], InferenceResponse]:
         """
-        Generate text from a prompt (synchronous).
+        Generate text from prompts (synchronous).
         
         Args:
-            prompt: Input prompt (string or token IDs)
+            prompt: Input prompt or list of prompts
             max_new_tokens: Maximum tokens to generate
             temperature: Sampling temperature
             top_p: Nucleus sampling parameter
@@ -205,11 +205,18 @@ class MoEInferenceEngine:
         Returns:
             Generated token IDs or InferenceResponse
         """
-        # Tokenize if necessary
-        if isinstance(prompt, str):
-            input_ids = self._tokenize(prompt)
+        if isinstance(prompt, list):
+            if len(prompt) == 0:
+                return []
+            if all(isinstance(item, int) for item in prompt):
+                prompts = [prompt]
+                return_single = True
+            else:
+                prompts = prompt
+                return_single = False
         else:
-            input_ids = torch.tensor(prompt, dtype=torch.long)
+            prompts = [prompt]
+            return_single = True
         
         # Create generation config
         gen_config = GenerationConfig(
@@ -221,18 +228,26 @@ class MoEInferenceEngine:
             **kwargs
         )
         
-        # Create request
-        request = InferenceRequest(
-            request_id=f"req_{int(time.time() * 1000)}_{id(prompt)}",
-            input_ids=input_ids,
-            generation_config=gen_config
-        )
+        requests = []
+        timestamp = int(time.time() * 1000)
+        for idx, item in enumerate(prompts):
+            if isinstance(item, str):
+                input_ids = self._tokenize(item)
+            else:
+                input_ids = torch.tensor(item, dtype=torch.long)
+            requests.append(InferenceRequest(
+                request_id=f"req_{timestamp}_{id(item)}_{idx}",
+                input_ids=input_ids,
+                generation_config=gen_config
+            ))
         
-        # Generate
         inference_mode = mode or self.default_mode
-        output_ids = self.orchestrator.generate(request, mode=inference_mode)
+        output_ids = self.orchestrator.generate(requests, mode=inference_mode)
+        output_lists = [ids.tolist() for ids in output_ids]
         
-        return output_ids.tolist()
+        if return_single:
+            return output_lists[0]
+        return output_lists
     
     def submit(
         self,

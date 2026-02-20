@@ -51,9 +51,17 @@ class StandardDecodeEngine:
     def generate_batch(self, batch: BatchedRequest) -> Dict:
         self.metrics.start_phase('standard_generation')
 
-        generated_sequences = []
-        for request in batch.requests:
-            generated_sequences.append(self._generate_single(request))
+        generated_sequences = [None] * len(batch.requests)
+        requests_by_len: Dict[int, List[int]] = {}
+        for idx, request in enumerate(batch.requests):
+            seq_len = len(request.input_ids)
+            requests_by_len.setdefault(seq_len, []).append(idx)
+
+        for _, indices in requests_by_len.items():
+            group_requests = [batch.requests[i] for i in indices]
+            group_outputs = self._generate_group(group_requests)
+            for out_idx, req_idx in enumerate(indices):
+                generated_sequences[req_idx] = group_outputs[out_idx]
 
         self.metrics.end_phase('standard_generation')
 
@@ -91,6 +99,108 @@ class StandardDecodeEngine:
 
         return torch.tensor(generated_ids, dtype=torch.long)
 
+    def _generate_group(self, requests: List) -> List[torch.Tensor]:
+        if not requests:
+            return []
+
+        kv_cache = PagedKVCache(
+            config=self.config,
+            block_size=256,
+            dtype=self.config.get_dtype(),
+        )
+
+        input_ids = torch.stack([req.input_ids for req in requests], dim=0)
+        prefill_output = self.prefill_engine.forward(
+            input_ids=input_ids,
+            kv_cache=kv_cache,
+            seq_ids=list(range(len(requests))),
+            is_prefill=True,
+        )
+
+        next_token_ids = prefill_output['next_token_id']
+        generated_ids = [[token_id.item()] for token_id in next_token_ids]
+        max_new_tokens = [req.generation_config.max_new_tokens for req in requests]
+
+        active_indices = [
+            idx for idx, ids in enumerate(generated_ids)
+            if len(ids) < max_new_tokens[idx]
+        ]
+
+        current_tokens = next_token_ids.view(-1, 1)
+
+        while active_indices:
+            active_tokens = current_tokens[active_indices]
+            active_seq_ids = active_indices
+            active_configs = [requests[i].generation_config for i in active_indices]
+
+            next_tokens = self._decode_step_batch(
+                current_tokens=active_tokens,
+                kv_cache=kv_cache,
+                generation_configs=active_configs,
+                seq_ids=active_seq_ids,
+            )
+
+            for local_idx, seq_idx in enumerate(active_indices):
+                token_id = next_tokens[local_idx].item()
+                generated_ids[seq_idx].append(token_id)
+                current_tokens[seq_idx] = next_tokens[local_idx].view(1, 1)
+
+            active_indices = [
+                idx for idx, ids in enumerate(generated_ids)
+                if len(ids) < max_new_tokens[idx]
+            ]
+
+        return [torch.tensor(ids, dtype=torch.long) for ids in generated_ids]
+
+    def _decode_step_batch(
+        self,
+        current_tokens: torch.Tensor,
+        kv_cache: PagedKVCache,
+        generation_configs: List[GenerationConfig],
+        seq_ids: List[int],
+    ) -> torch.Tensor:
+        if hasattr(kv_cache, "sequences") and hasattr(kv_cache, "append_token"):
+            for seq_id in seq_ids:
+                kv_cache.append_token(seq_id)
+
+        hidden_states = self.model_runner.embed(current_tokens.cuda())
+
+        for layer_idx in range(self.model_runner.get_num_layers()):
+            attn_output = self.model_runner.forward_attention(
+                layer_idx=layer_idx,
+                hidden_states=hidden_states,
+                kv_cache=kv_cache,
+                positions=None,
+                seq_ids=seq_ids,
+                is_prefill=False,
+            )
+
+            routing_result = self.model_runner.route_experts(
+                layer_idx=layer_idx,
+                hidden_states=attn_output.post_attn_normed,
+            )
+
+            placement = build_prefill_placement(
+                routing_result=routing_result,
+                expert_cache=self.expert_cache,
+                parameter_loader=self.parameter_loader,
+            )
+
+            hidden_states = self.model_runner.forward_moe(
+                layer_idx=layer_idx,
+                attn_output=attn_output,
+                expert_placement=placement,
+            )
+
+        logits = self.model_runner.compute_logits(hidden_states)
+        logits = logits[:, -1, :]
+
+        next_tokens = []
+        for idx, config in enumerate(generation_configs):
+            token = self._sample_token(logits[idx].unsqueeze(0), config)
+            next_tokens.append(token)
+
+        return torch.stack(next_tokens, dim=0)
     def _decode_step(
         self,
         current_token: torch.Tensor,

@@ -94,7 +94,7 @@ def main():
         temperature=0.8,
         top_p=1.0,
         top_k=50,
-        do_sample=True,
+        do_sample=False,
         use_speculative=False,
     )
     # Single request (first prompt) for comparison

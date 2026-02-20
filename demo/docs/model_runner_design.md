@@ -1496,3 +1496,135 @@ class TestCUDAGraphFeasibility:
 | **新增** | `tests/unit/test_forward_moe.py` | MoE 测试 |
 | **新增** | `tests/integration/test_prefill_with_model_runner.py` | Prefill 集成测试 |
 | **新增** | `tests/integration/test_draft_verify_with_model_runner.py` | Draft-Verify 集成测试 |
+
+---
+
+## 9. Continuous Batching 重构设计（参考 nano-vllm）
+
+### 9.1 背景与问题
+
+当前 demo 的 batch 逻辑主要依赖 `BatchManager` 的 padding 组批和 `StandardDecodeEngine` 的同长度分组执行，面对真实线上请求（prompt 长度分布离散、到达时间随机）时，会出现以下问题：
+
+1. **padding 开销高**：请求长度不一致导致无效计算比例升高。
+2. **批次不连续**：每次只处理一批固定请求，无法在 decode 过程中“插入”新请求。
+3. **KV cache 利用率低**：已在 PagedKVCache 中支持变长序列与 block 管理，但未被调度层充分利用。
+
+目标是引入类似 nano-vllm 的 continuous batching：用“序列调度 + token budget”的方式，在每个 step 动态构造 batch，尽量提高吞吐和 GPU 利用率，同时保持较低延迟。
+
+### 9.2 参考实现的关键机制（nano-vllm）
+
+nano-vllm 的核心机制可以归纳为：
+
+- **Scheduler**：维护 `waiting`/`running` 两个队列，优先进行 prefill；当没有 prefill 可做时执行 decode。
+- **BlockManager**：基于 KV cache block 进行分配与回收，支持 preemption。
+- **Token Budget**：通过 `max_num_seqs` 与 `max_num_batched_tokens` 控制单步工作量，避免过大 batch 造成延迟抖动。
+
+对应实现参考：
+
+- [scheduler.py](file:///zx_data1/sparsity/nano-vllm/nanovllm/engine/scheduler.py)
+- [block_manager.py](file:///zx_data1/sparsity/nano-vllm/nanovllm/engine/block_manager.py)
+
+### 9.3 demo 项目可复用基础
+
+demo 项目已有以下能力，可直接用于 continuous batching：
+
+- **PagedKVCache 的序列状态与 block 管理**：[paged_kv_cache.py](file:///zx_data1/sparsity/on_device_sd/demo/src/memory/paged_kv_cache.py)
+- **变长 attention 支持**（prefill 的 varlen + decode 的 block_table）：[attention.py](file:///zx_data1/sparsity/on_device_sd/demo/src/layers/attention.py)
+- **ModelRunner 已支持 `seq_ids` + `is_prefill`**，可被调度层驱动：[model_runner.py](file:///zx_data1/sparsity/on_device_sd/demo/src/core/model_runner.py)
+
+因此重构重点在 **调度与执行层**，而非模型算子层。
+
+### 9.4 设计目标
+
+1. **连续批处理**：任意时刻可加入新请求，decode 期间可插入 prefill。
+2. **无 padding 计算**：prefill 使用 varlen attention，decode 使用 block_table。
+3. **可预empt**：当 KV cache 不足时，可回退低优先级序列。
+4. **与现有 MoE 调度兼容**：routing/placement 逻辑不变，只改变 batch 构造与 KV 管理方式。
+
+### 9.5 新增/调整的核心组件
+
+**CBatchSequence（序列状态）**
+
+- 持有 `request_id`、`input_ids`、`generated_ids`、`generation_config`、`priority`、`status`、`seq_id`。
+- 与 `PagedKVCache.sequences` 一一对应，统一管理 KV 分配与长度。
+
+**CBatchScheduler（连续调度器）**
+
+- 维护 `waiting` / `running` 双队列。
+- 使用 `max_num_seqs` / `max_num_batched_tokens` 控制单步工作量。
+- 当 block 不足时支持 preempt（移动到 waiting，释放 KV）。
+
+**CBatchExecutor（执行层）**
+
+- 每个 step 接收 `seq_ids` 列表，负责 prefill 或 decode 执行。
+- 通过 `PagedKVCache.get_attention_context` 生成 context，并驱动 `ModelRunner`。
+
+### 9.6 调度算法（伪代码）
+
+```
+def schedule_step():
+    scheduled = []
+    num_seqs = 0
+    num_tokens = 0
+
+    # 1) 尝试 prefill
+    while waiting and num_seqs < max_num_seqs:
+        seq = waiting[0]
+        if num_tokens + seq.prompt_len > max_num_batched_tokens:
+            break
+        if not kv_cache.add_sequence(seq_id, prompt_len=seq.prompt_len):
+            break
+        waiting.popleft()
+        running.append(seq)
+        scheduled.append(seq)
+        num_seqs += 1
+        num_tokens += seq.prompt_len
+    if scheduled:
+        return scheduled, is_prefill=True
+
+    # 2) decode
+    while running and num_seqs < max_num_seqs:
+        seq = running.popleft()
+        if not kv_cache.can_append_token(seq.seq_id):
+            preempt(seq)
+            continue
+        kv_cache.append_token(seq.seq_id)
+        scheduled.append(seq)
+        num_seqs += 1
+    running.extendleft(reversed(scheduled))
+    return scheduled, is_prefill=False
+```
+
+### 9.7 执行流程
+
+**Prefill**
+
+1. 按调度器返回的 `scheduled` 序列构造 `seq_ids`。
+2. 将各序列 prompt 拼接为扁平输入（varlen），调用 `forward_attention` + `route_experts` + `forward_moe`。
+3. 对每条序列采样首个 token，写回 `generated_ids`，进入 running。
+
+**Decode**
+
+1. 对 running 序列收集 `seq_ids`，每条序列单 token decode。
+2. `PagedKVCache.get_attention_context` 自动生成 `slot_mapping`/`block_tables`/`context_lens`。
+3. 逐序列采样下一 token，并更新 `generated_ids`、完成状态。
+
+### 9.8 与现有模块的对接方式
+
+- **BatchManager**：仅保留请求队列与响应聚合，去除 padding 与固定 batch。
+- **StandardDecodeEngine**：替换为“step 驱动”的 ContinuousDecodeEngine，内部使用 `CBatchScheduler`。
+- **Orchestrator**：`generate` 默认接受 prompt 列表，循环 `schedule_step → execute_step` 直到所有序列完成。
+- **PagedKVCache**：作为调度约束与 attention context 来源，不引入新的 KV 结构。
+
+### 9.9 关键指标与监控
+
+- 队列等待时间（queue latency）
+- 每步 token 数与吞吐（tokens/sec）
+- preempt 次数与恢复时间
+- KV cache 利用率与 block 碎片率
+
+### 9.10 迁移顺序建议
+
+1. 引入 `CBatchScheduler` 与 `CBatchSequence`，构建单步执行接口。
+2. 在标准解码路径启用 continuous batching（不影响 draft/verify）。
+3. 扩展到 speculative：draft/verify 复用相同调度框架，利用 `PagedKVCache` 的 draft/verify API。
