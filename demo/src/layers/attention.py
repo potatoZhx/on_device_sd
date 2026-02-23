@@ -173,6 +173,7 @@ class Qwen3Attention(nn.Module):
         kv_cache: PagedKVCache,
         seq_ids: list[int],
         is_prefill: bool,
+        is_verify: bool = False,
     ) -> torch.Tensor:
         """
         Forward pass with flash_attn
@@ -208,12 +209,16 @@ class Qwen3Attention(nn.Module):
         q, k = self.rotary_emb(positions, q, k)
         
         # Store KV in cache
-        context = kv_cache.get_attention_context(seq_ids, is_prefill)
+        context = kv_cache.get_verify_context(seq_ids) if is_verify else kv_cache.get_attention_context(seq_ids, is_prefill)
         k_cache_layer, v_cache_layer = kv_cache.get_kv_cache_for_layer(self.layer_idx)
         
         # Store current KV
         if context['slot_mapping'].numel() > 0:
-            store_kvcache(k, v, k_cache_layer, v_cache_layer, context['slot_mapping'])
+            if is_verify:
+                num_new_tokens = context['slot_mapping'].numel()
+                store_kvcache(k[-num_new_tokens:], v[-num_new_tokens:], k_cache_layer, v_cache_layer, context['slot_mapping'])
+            else:
+                store_kvcache(k, v, k_cache_layer, v_cache_layer, context['slot_mapping'])
         
         # Compute attention using flash_attn
         if is_prefill:
@@ -243,7 +248,7 @@ class Qwen3Attention(nn.Module):
                 self.head_dim,
             )
             attn_output = flash_attn_with_kvcache(
-                q.unsqueeze(1),  # [num_tokens, 1, num_heads, head_dim]
+                q.unsqueeze(0) if is_verify else q.unsqueeze(1),
                 k_cache_view,
                 v_cache_view,
                 cache_seqlens=context['context_lens'],
@@ -314,6 +319,7 @@ class Qwen3AttentionWithWeights:
         kv_cache: PagedKVCache,
         seq_ids: list[int],
         is_prefill: bool,
+        is_verify: bool = False,
     ) -> torch.Tensor:
         """
         Forward pass using external weights
@@ -351,12 +357,16 @@ class Qwen3AttentionWithWeights:
         q, k = self.rotary_emb(positions, q, k)
         
         # Get attention context
-        context = kv_cache.get_attention_context(seq_ids, is_prefill)
+        context = kv_cache.get_verify_context(seq_ids) if is_verify else kv_cache.get_attention_context(seq_ids, is_prefill)
         k_cache_layer, v_cache_layer = kv_cache.get_kv_cache_for_layer(self.layer_idx)
         
         # Store KV in cache
         if context['slot_mapping'].numel() > 0:
-            store_kvcache(k, v, k_cache_layer, v_cache_layer, context['slot_mapping'])
+            if is_verify:
+                num_new_tokens = context['slot_mapping'].numel()
+                store_kvcache(k[-num_new_tokens:], v[-num_new_tokens:], k_cache_layer, v_cache_layer, context['slot_mapping'])
+            else:
+                store_kvcache(k, v, k_cache_layer, v_cache_layer, context['slot_mapping'])
         
         # Compute attention
         if is_prefill:
@@ -383,7 +393,7 @@ class Qwen3AttentionWithWeights:
                 self.head_dim,
             )
             attn_output = flash_attn_with_kvcache(
-                q.unsqueeze(1),
+                q.unsqueeze(0) if is_verify else q.unsqueeze(1),
                 k_cache_view,
                 v_cache_view,
                 cache_seqlens=context['context_lens'],

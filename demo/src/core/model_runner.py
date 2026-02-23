@@ -125,6 +125,7 @@ class ModelRunner(ABC):
         *,
         seq_ids: Optional[List[int]] = None,
         is_prefill: bool = False,
+        is_verify: bool = False,
     ) -> AttentionOutput:
         """
         执行注意力部分（不包含 MoE）。
@@ -220,6 +221,7 @@ class ModelRunner(ABC):
         *,
         seq_ids: Optional[List[int]] = None,
         is_prefill: bool = False,
+        is_verify: bool = False,
     ) -> LayerOutput:
         """
         完整的单层 forward（默认实现：组合三步调用）。
@@ -232,6 +234,7 @@ class ModelRunner(ABC):
             positions=positions,
             seq_ids=seq_ids,
             is_prefill=is_prefill,
+            is_verify=is_verify,
         )
         moe_out = self.forward_moe(layer_idx, attn_out, expert_placement)
         return LayerOutput(hidden_states=moe_out)

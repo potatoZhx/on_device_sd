@@ -510,6 +510,34 @@ class PagedKVCache:
             'context_lens': torch.tensor(context_lens, dtype=torch.int32, device='cuda'),
             'block_tables': torch.stack(block_tables),  # [num_seqs, max_num_blocks]
         }
+
+    def get_verify_context(self, seq_ids: List[int]) -> Dict:
+        slot_mapping = []
+        context_lens = []
+        max_num_blocks = 0
+
+        for seq_id in seq_ids:
+            seq_state = self.sequences[seq_id]
+            verify_start = seq_state.draft_start_num_tokens
+            num_new_tokens = seq_state.num_tokens - verify_start
+
+            slots = seq_state.get_slot_mapping(verify_start, num_new_tokens)
+            slot_mapping.extend(slots)
+
+            context_lens.append(seq_state.num_tokens)
+            max_num_blocks = max(max_num_blocks, len(seq_state.block_table))
+
+        block_tables = []
+        for seq_id in seq_ids:
+            seq_state = self.sequences[seq_id]
+            block_table = seq_state.get_block_table_tensor(max_num_blocks)
+            block_tables.append(block_table)
+
+        return {
+            'slot_mapping': torch.tensor(slot_mapping, dtype=torch.int32, device='cuda'),
+            'context_lens': torch.tensor(context_lens, dtype=torch.int32, device='cuda'),
+            'block_tables': torch.stack(block_tables),
+        }
     
     # ==================== Draft-Verify Support ====================
     
@@ -579,6 +607,29 @@ class PagedKVCache:
         logger.debug(f"Replaced draft cache for seq {seq_id}, "
                     f"accepted {num_accepted_tokens} tokens, "
                     f"final_tokens={final_num_tokens}")
+
+    def accept_draft(self, seq_id: int, num_accepted_tokens: int):
+        if seq_id not in self.sequences:
+            raise ValueError(f"Sequence {seq_id} not found")
+
+        seq_state = self.sequences[seq_id]
+        if not seq_state.is_in_draft:
+            logger.warning(f"Sequence {seq_id} is not in draft mode")
+            return
+
+        final_num_tokens = seq_state.draft_start_num_tokens + num_accepted_tokens
+        final_num_blocks = (final_num_tokens + self.block_size - 1) // self.block_size
+
+        for i in range(final_num_blocks, len(seq_state.block_table)):
+            block_id = seq_state.block_table[i]
+            if self.block_manager.dec_ref(block_id):
+                self.block_manager.deallocate_block(block_id)
+
+        seq_state.block_table = seq_state.block_table[:final_num_blocks]
+        seq_state.num_tokens = final_num_tokens
+        seq_state.is_in_draft = False
+        seq_state.draft_start_num_tokens = 0
+        seq_state.draft_start_num_blocks = 0
     
     # ==================== Utilities ====================
     
@@ -596,4 +647,3 @@ class PagedKVCache:
         seq_ids = list(self.sequences.keys())
         for seq_id in seq_ids:
             self.remove_sequence(seq_id)
-

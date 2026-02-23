@@ -30,6 +30,8 @@ class ExpertCache:
         # Cache storage
         self.cached_experts: OrderedDict[ExpertID, Dict[str, torch.Tensor]] = OrderedDict()
         self.pinned_experts: Set[ExpertID] = set()  # Shared experts that cannot be evicted
+        self.pending_transfers: Dict[ExpertID, tuple] = {}
+        self.transfer_stream = torch.cuda.Stream() if torch.cuda.is_available() else None
         
         # Statistics
         self.cache_hits = 0
@@ -52,6 +54,16 @@ class ExpertCache:
             self.cache_hits += 1
             self.replacement_strategy.on_access(expert_id)
             return self.cached_experts[expert_id]
+        if expert_id in self.pending_transfers:
+            event, gpu_params = self.pending_transfers[expert_id]
+            if event is None or event.query():
+                self._finalize_transfer(expert_id)
+                if expert_id in self.cached_experts:
+                    self.cache_hits += 1
+                    self.replacement_strategy.on_access(expert_id)
+                    return self.cached_experts[expert_id]
+            self.cache_misses += 1
+            return None
         else:
             self.cache_misses += 1
             return None
@@ -138,6 +150,33 @@ class ExpertCache:
             return False
         
         return self.evict(candidate)
+
+    def _put_gpu_params(
+        self,
+        expert_id: ExpertID,
+        expert_params: Dict[str, torch.Tensor],
+        is_pinned: bool = False
+    ) -> bool:
+        if expert_id in self.cached_experts:
+            return True
+        while len(self.cached_experts) >= self.max_experts:
+            if not self._evict_one():
+                return False
+        self.cached_experts[expert_id] = expert_params
+        if is_pinned:
+            self.pinned_experts.add(expert_id)
+        self.replacement_strategy.on_insert(expert_id)
+        return True
+
+    def _finalize_transfer(self, expert_id: ExpertID) -> bool:
+        if expert_id not in self.pending_transfers:
+            return False
+        event, gpu_params = self.pending_transfers[expert_id]
+        if event is not None:
+            event.synchronize()
+        success = self._put_gpu_params(expert_id, gpu_params)
+        del self.pending_transfers[expert_id]
+        return success
     
     def prefetch_async(
         self, 
@@ -148,10 +187,86 @@ class ExpertCache:
         Asynchronously prefetch experts to GPU cache.
         Non-blocking operation using CUDA streams.
         """
-        # TODO: Implement async transfer with streams
         for expert_id in expert_ids:
-            if expert_id not in self.cached_experts and expert_id in source_params:
+            if expert_id in self.cached_experts or expert_id in self.pending_transfers:
+                continue
+            if expert_id not in source_params:
+                continue
+            if self.transfer_stream is None:
                 self.put(expert_id, source_params[expert_id])
+                continue
+            while len(self.cached_experts) + len(self.pending_transfers) >= self.max_experts:
+                if not self._evict_one():
+                    return
+            with torch.cuda.stream(self.transfer_stream):
+                gpu_params = {
+                    k: v.to(device="cuda", non_blocking=True)
+                    for k, v in source_params[expert_id].items()
+                }
+                event = torch.cuda.Event()
+                event.record(self.transfer_stream)
+            self.pending_transfers[expert_id] = (event, gpu_params)
+
+    def complete_ready_transfers(self) -> List[ExpertID]:
+        completed = []
+        for expert_id, (event, _) in list(self.pending_transfers.items()):
+            if event is None or event.query():
+                if self._finalize_transfer(expert_id):
+                    completed.append(expert_id)
+        return completed
+
+
+class AsyncExpertTransfer:
+    def __init__(self, max_concurrent: int = 2):
+        self.max_concurrent = max_concurrent
+        self.transfer_stream = torch.cuda.Stream() if torch.cuda.is_available() else None
+        self.pending_events: Dict[ExpertID, tuple] = {}
+
+    def start_transfer(
+        self,
+        expert_id: ExpertID,
+        cpu_params: Dict[str, torch.Tensor],
+        expert_cache: ExpertCache,
+    ) -> None:
+        if expert_id in self.pending_events:
+            return
+        if len(self.pending_events) >= self.max_concurrent:
+            self._wait_oldest(expert_cache)
+        if self.transfer_stream is None:
+            expert_cache.put(expert_id, cpu_params)
+            return
+        with torch.cuda.stream(self.transfer_stream):
+            gpu_params = {
+                k: v.to('cuda', non_blocking=True)
+                for k, v in cpu_params.items()
+            }
+            event = torch.cuda.Event()
+            event.record(self.transfer_stream)
+        self.pending_events[expert_id] = (event, gpu_params)
+
+    def poll_completed(self, expert_cache: ExpertCache) -> List[ExpertID]:
+        completed = []
+        for expert_id, (event, gpu_params) in list(self.pending_events.items()):
+            if event.query():
+                expert_cache.put(expert_id, gpu_params)
+                completed.append(expert_id)
+        for expert_id in completed:
+            del self.pending_events[expert_id]
+        return completed
+
+    def wait_all(self, expert_cache: ExpertCache) -> None:
+        for expert_id, (event, gpu_params) in list(self.pending_events.items()):
+            event.synchronize()
+            expert_cache.put(expert_id, gpu_params)
+        self.pending_events.clear()
+
+    def _wait_oldest(self, expert_cache: ExpertCache) -> None:
+        if not self.pending_events:
+            return
+        oldest_id = next(iter(self.pending_events))
+        event, gpu_params = self.pending_events.pop(oldest_id)
+        event.synchronize()
+        expert_cache.put(oldest_id, gpu_params)
     
     def get_cache_stats(self) -> Dict[str, float]:
         """Get cache performance statistics"""

@@ -37,6 +37,7 @@ class BatchManager:
         
         # Active batches
         self.active_batches: Dict[str, BatchedRequest] = {}
+        self.active_requests: Dict[str, InferenceRequest] = {}
         
         # Request tracking
         self.request_status: Dict[str, RequestStatus] = {}
@@ -122,6 +123,41 @@ class BatchManager:
         logger.info(f"Formed batch {batch.batch_id} with {len(requests)} requests")
         
         return batch
+
+    def pop_requests(
+        self,
+        timeout_ms: Optional[float] = None,
+        max_requests: Optional[int] = None
+    ) -> List[InferenceRequest]:
+        if timeout_ms is None:
+            timeout_ms = self.max_waiting_time_ms
+        if max_requests is None:
+            max_requests = self.max_batch_size
+
+        start_time = time.time()
+        requests: List[InferenceRequest] = []
+
+        while len(requests) < max_requests:
+            remaining_time = timeout_ms - (time.time() - start_time) * 1000
+
+            if remaining_time <= 0 and len(requests) > 0:
+                break
+
+            try:
+                timeout_sec = max(0.001, remaining_time / 1000.0)
+                _, _, request = self.request_queue.get(timeout=timeout_sec)
+                requests.append(request)
+
+                with self.lock:
+                    self.request_status[request.request_id] = RequestStatus.PROCESSING
+                    self.active_requests[request.request_id] = request
+                    request.started_at = time.time()
+            except Empty:
+                if len(requests) > 0:
+                    break
+                return []
+
+        return requests
     
     def _form_batch(self, requests: List[InferenceRequest]) -> BatchedRequest:
         """
@@ -272,6 +308,16 @@ class BatchManager:
         logger.info(f"Completed batch {batch.batch_id}")
         
         return responses
+
+    def complete_requests(self, responses: List[InferenceResponse]) -> None:
+        for response in responses:
+            with self.lock:
+                status = RequestStatus.COMPLETED if response.success else RequestStatus.FAILED
+                self.request_status[response.request_id] = status
+                self.request_responses[response.request_id] = response
+                request = self.active_requests.pop(response.request_id, None)
+                if request is not None:
+                    request.completed_at = time.time()
     
     def get_request_status(self, request_id: str) -> Optional[RequestStatus]:
         """Get status of a specific request"""
@@ -300,4 +346,4 @@ class BatchManager:
     def get_active_batch_count(self) -> int:
         """Get number of active batches"""
         with self.lock:
-            return len(self.active_batches)
+            return len(self.active_batches) + len(self.active_requests)

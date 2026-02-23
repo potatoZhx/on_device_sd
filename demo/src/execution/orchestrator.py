@@ -20,6 +20,7 @@ from .prefill_engine import PrefillEngine
 from .draft_engine import DraftEngine
 from .verify_engine import VerifyEngine
 from .standard_engine import StandardDecodeEngine
+from .continuous_batch_engine import ContinuousBatchEngine, DecodeMode, Sequence
 from .acceptance_strategy import AcceptanceStrategy
 from .batch_manager import BatchManager
 from ..model import Qwen3ModelRunner
@@ -102,6 +103,26 @@ class EnhancedInferenceOrchestrator:
             prefetcher=prefetcher,
             metrics=self.metrics,
         )
+
+        max_batched_tokens = max_batch_size * self.config.max_position_embeddings
+        self.cb_engines = {
+            InferenceMode.STANDARD: self._create_continuous_engine(
+                decode_mode=DecodeMode.STANDARD,
+                max_num_seqs=max_batch_size,
+                max_num_batched_tokens=max_batched_tokens,
+                max_draft_tokens=GenerationConfig().max_draft_tokens,
+            ),
+            InferenceMode.SPECULATIVE: self._create_continuous_engine(
+                decode_mode=DecodeMode.SPECULATIVE,
+                max_num_seqs=max_batch_size,
+                max_num_batched_tokens=max_batched_tokens,
+                max_draft_tokens=GenerationConfig().max_draft_tokens,
+            ),
+        }
+        self.cb_seq_request_map: Dict[InferenceMode, Dict[int, InferenceRequest]] = {
+            InferenceMode.STANDARD: {},
+            InferenceMode.SPECULATIVE: {},
+        }
         
         logger.info(f"EnhancedInferenceOrchestrator initialized "
                    f"(default_mode={default_mode.value}, max_batch_size={max_batch_size})")
@@ -142,21 +163,38 @@ class EnhancedInferenceOrchestrator:
         Returns:
             List of inference responses
         """
-        # Get next batch
-        batch = self.batch_manager.get_next_batch(timeout_ms=timeout_ms)
-        
-        if batch is None:
-            return []
-        
-        result = self._execute_batch(batch, mode=mode)
-        
-        # Complete batch and generate responses
-        responses = self.batch_manager.complete_batch(
-            batch=batch,
-            generated_sequences=result['generated_sequences'],
-            statistics=result.get('statistics')
+        requests = self.batch_manager.pop_requests(
+            timeout_ms=timeout_ms,
+            max_requests=self.batch_manager.max_batch_size,
         )
-        
+
+        if not requests and all(engine.scheduler.is_finished() for engine in self.cb_engines.values()):
+            return []
+
+        for request in requests:
+            gen_config = self._get_generation_config(request)
+            request.generation_config = gen_config
+            request.max_new_tokens = gen_config.max_new_tokens
+            engine_mode = self._select_mode_for_request(request, mode)
+            if engine_mode == InferenceMode.SPECULATIVE:
+                self.cb_engines[engine_mode].executor.max_draft_tokens = max(
+                    self.cb_engines[engine_mode].executor.max_draft_tokens,
+                    gen_config.max_draft_tokens,
+                )
+            seq = self._build_sequence(request)
+            self.cb_seq_request_map[engine_mode][seq.seq_id] = request
+            self.cb_engines[engine_mode].add_sequences([seq])
+
+        finished_sequences: List[Sequence] = []
+        for engine in self.cb_engines.values():
+            if not engine.scheduler.is_finished():
+                _, finished = engine.step()
+                finished_sequences.extend(finished)
+
+        responses = self._build_responses_from_sequences(finished_sequences)
+        if responses:
+            self.batch_manager.complete_requests(responses)
+
         return responses
 
     def _get_generation_config(self, request: InferenceRequest) -> GenerationConfig:
@@ -185,8 +223,7 @@ class EnhancedInferenceOrchestrator:
         for req in requests:
             self.metrics.start_request(req.request_id)
         
-        batch = self._create_batch_from_requests(requests)
-        result = self._execute_batch(batch, mode=mode)
+        result = self._execute_requests_continuous(requests, mode=mode)
         
         for req in requests:
             self.metrics.end_request(req.request_id)
@@ -368,23 +405,7 @@ class EnhancedInferenceOrchestrator:
         batch: BatchedRequest,
         mode: Optional[InferenceMode] = None
     ) -> Dict:
-        inference_mode = mode or self.default_mode
-        
-        for req in batch.requests:
-            if getattr(req, "generation_config", None) is None:
-                req.generation_config = self._get_generation_config(req)
-        
-        if all(req.generation_config.use_speculative for req in batch.requests):
-            inference_mode = InferenceMode.SPECULATIVE
-        elif not any(req.generation_config.use_speculative for req in batch.requests):
-            inference_mode = InferenceMode.STANDARD
-        
-        logger.info(f"Processing batch {batch.batch_id} with mode={inference_mode.value}")
-        
-        if inference_mode == InferenceMode.STANDARD:
-            return self.standard_engine.generate_batch(batch)
-        
-        return self._generate_batch_speculative(batch)
+        return self._execute_requests_continuous(batch.requests, mode=mode)
     
     def _create_batch_from_requests(self, requests: List[InferenceRequest]) -> BatchedRequest:
         batch_size = len(requests)
@@ -418,6 +439,153 @@ class EnhancedInferenceOrchestrator:
             max_batch_seq_len=max_seq_len,
             padding_token_id=padding_token_id
         )
+
+    def _create_continuous_engine(
+        self,
+        decode_mode: DecodeMode,
+        max_num_seqs: int,
+        max_num_batched_tokens: int,
+        max_draft_tokens: int,
+    ) -> ContinuousBatchEngine:
+        kv_cache = PagedKVCache(
+            config=self.config,
+            block_size=self.kv_cache_block_size,
+            dtype=self.config.get_dtype(),
+        )
+        return ContinuousBatchEngine(
+            model_runner=self.model_runner,
+            kv_cache=kv_cache,
+            expert_cache=self.expert_cache,
+            parameter_loader=self.parameter_loader,
+            prefetcher=self.prefetcher,
+            draft_scheduler=self.draft_scheduler,
+            acceptance_strategy=self.acceptance_strategy,
+            max_num_seqs=max_num_seqs,
+            max_num_batched_tokens=max_num_batched_tokens,
+            decode_mode=decode_mode,
+            max_draft_tokens=max_draft_tokens,
+        )
+
+    def _select_mode_for_request(
+        self,
+        request: InferenceRequest,
+        mode: Optional[InferenceMode],
+    ) -> InferenceMode:
+        if mode is not None:
+            return mode
+        gen_config = self._get_generation_config(request)
+        return InferenceMode.SPECULATIVE if gen_config.use_speculative else InferenceMode.STANDARD
+
+    def _build_sequence(self, request: InferenceRequest) -> Sequence:
+        gen_config = self._get_generation_config(request)
+        return Sequence(
+            token_ids=request.input_ids.tolist(),
+            max_new_tokens=gen_config.max_new_tokens,
+            temperature=gen_config.temperature,
+            top_p=gen_config.top_p,
+            top_k=gen_config.top_k,
+            eos_token_id=gen_config.eos_token_id,
+        )
+
+    def _execute_requests_continuous(
+        self,
+        requests: List[InferenceRequest],
+        mode: Optional[InferenceMode] = None,
+    ) -> Dict:
+        if not requests:
+            return {"generated_sequences": [], "statistics": {}}
+
+        requests_by_mode: Dict[InferenceMode, List[tuple[int, InferenceRequest]]] = {
+            InferenceMode.STANDARD: [],
+            InferenceMode.SPECULATIVE: [],
+        }
+        for idx, request in enumerate(requests):
+            gen_config = self._get_generation_config(request)
+            request.generation_config = gen_config
+            request.max_new_tokens = gen_config.max_new_tokens
+            selected_mode = self._select_mode_for_request(request, mode)
+            requests_by_mode[selected_mode].append((idx, request))
+
+        generated_sequences: List[Optional[torch.Tensor]] = [None] * len(requests)
+        for selected_mode, mode_requests in requests_by_mode.items():
+            if not mode_requests:
+                continue
+            outputs = self._run_continuous_generation(mode_requests, selected_mode)
+            for idx, output in outputs:
+                generated_sequences[idx] = output
+
+        return {
+            "generated_sequences": generated_sequences,
+            "statistics": {},
+        }
+
+    def _run_continuous_generation(
+        self,
+        requests: List[tuple[int, InferenceRequest]],
+        mode: InferenceMode,
+    ) -> List[tuple[int, torch.Tensor]]:
+        max_draft_tokens = max(
+            (self._get_generation_config(req).max_draft_tokens for _, req in requests),
+            default=GenerationConfig().max_draft_tokens,
+        )
+        max_num_batched_tokens = len(requests) * self.config.max_position_embeddings
+        engine = self._create_continuous_engine(
+            decode_mode=DecodeMode.SPECULATIVE if mode == InferenceMode.SPECULATIVE else DecodeMode.STANDARD,
+            max_num_seqs=len(requests),
+            max_num_batched_tokens=max_num_batched_tokens,
+            max_draft_tokens=max_draft_tokens,
+        )
+
+        seqs: List[Sequence] = []
+        seq_id_to_index: Dict[int, int] = {}
+        for idx, request in requests:
+            seq = self._build_sequence(request)
+            seqs.append(seq)
+            seq_id_to_index[seq.seq_id] = idx
+
+        engine.add_sequences(seqs)
+
+        outputs: Dict[int, torch.Tensor] = {}
+        while not engine.scheduler.is_finished():
+            _, finished = engine.step()
+            for seq in finished:
+                outputs[seq_id_to_index[seq.seq_id]] = torch.tensor(
+                    seq.output_token_ids,
+                    dtype=torch.long,
+                )
+
+        return [(idx, outputs[idx]) for idx, _ in requests]
+
+    def _build_responses_from_sequences(
+        self,
+        sequences: List[Sequence],
+    ) -> List[InferenceResponse]:
+        responses: List[InferenceResponse] = []
+        for seq in sequences:
+            request = None
+            for mode_map in self.cb_seq_request_map.values():
+                if seq.seq_id in mode_map:
+                    request = mode_map.pop(seq.seq_id)
+                    break
+            if request is None:
+                continue
+            generation_time = 0.0
+            if hasattr(request, "started_at"):
+                generation_time = (time.time() - request.started_at) * 1000
+            num_tokens = len(seq.output_token_ids)
+            tokens_per_sec = num_tokens / (generation_time / 1000) if generation_time > 0 else 0.0
+            success = seq.error_msg is None
+            response = InferenceResponse(
+                request_id=request.request_id,
+                generated_ids=seq.output_token_ids,
+                num_tokens_generated=num_tokens,
+                generation_time_ms=generation_time,
+                tokens_per_second=tokens_per_sec,
+                success=success,
+                error=seq.error_msg,
+            )
+            responses.append(response)
+        return responses
     
     def get_statistics(self) -> Dict:
         """Get comprehensive statistics"""

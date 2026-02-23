@@ -3,6 +3,7 @@
 import torch
 import torch.nn.functional as F
 from typing import Dict, List, Optional, Any, Set
+from concurrent.futures import ThreadPoolExecutor
 
 from ..core.model_runner import (
     ModelRunner,
@@ -123,6 +124,7 @@ class Qwen3ModelRunner(ModelRunner):
         *,
         seq_ids: Optional[List[int]] = None,
         is_prefill: bool = False,
+        is_verify: bool = False,
     ) -> AttentionOutput:
         """
         执行 attention 部分（input_norm + attn + residual + post_attn_norm）。
@@ -187,6 +189,7 @@ class Qwen3ModelRunner(ModelRunner):
             kv_cache=kv_cache,
             seq_ids=seq_ids,
             is_prefill=is_prefill,
+            is_verify=is_verify,
         )
 
         if reshape_back:
@@ -229,6 +232,7 @@ class Qwen3ModelRunner(ModelRunner):
         *,
         seq_ids: Optional[List[int]] = None,
         is_prefill: bool = False,
+        is_verify: bool = False,
     ) -> LayerOutput:
         """完整单层 forward，包含 metadata。"""
         attn_out = self.forward_attention(
@@ -238,6 +242,7 @@ class Qwen3ModelRunner(ModelRunner):
             positions=positions,
             seq_ids=seq_ids,
             is_prefill=is_prefill,
+            is_verify=is_verify,
         )
         hidden_states = self.forward_moe(layer_idx, attn_out, expert_placement)
 
@@ -289,6 +294,9 @@ class Qwen3ModelRunner(ModelRunner):
         # 处理替换映射
         sub_map = expert_placement.substitution_map
 
+        gpu_tasks = []
+        cpu_tasks = []
+
         for expert_id in routing.activated_expert_ids:
             expert_idx = expert_id.expert_idx
             expert_mask = (topk_indices == expert_idx)
@@ -302,39 +310,71 @@ class Qwen3ModelRunner(ModelRunner):
             weights = topk_scores[token_indices, k_indices]
             expert_input = flat[token_indices]
 
-            # 决定执行路径
             if expert_idx in expert_placement.gpu_expert_params:
-                # GPU 执行
                 params = expert_placement.gpu_expert_params[expert_idx]
-                expert_output = expert_forward_with_weights(
-                    expert_input,
-                    params['gate_proj'], params['up_proj'], params['down_proj'],
-                )
+                gpu_tasks.append((token_indices, weights, expert_input, params))
             elif expert_idx in expert_placement.cpu_expert_params:
-                # CPU 执行
                 params = expert_placement.cpu_expert_params[expert_idx]
-                expert_input_cpu = expert_input.cpu()
-                expert_output_cpu = expert_forward_with_weights(
-                    expert_input_cpu,
-                    params['gate_proj'], params['up_proj'], params['down_proj'],
-                )
-                expert_output = expert_output_cpu.to(flat.device)
+                cpu_tasks.append((expert_idx, token_indices, weights, expert_input, params))
             elif expert_idx in sub_map:
-                # 替换执行
                 sub_idx = sub_map[expert_idx]
                 if sub_idx in expert_placement.gpu_expert_params:
                     params = expert_placement.gpu_expert_params[sub_idx]
-                    expert_output = expert_forward_with_weights(
-                        expert_input,
-                        params['gate_proj'], params['up_proj'], params['down_proj'],
-                    )
+                    gpu_tasks.append((token_indices, weights, expert_input, params))
+                elif sub_idx in expert_placement.cpu_expert_params:
+                    params = expert_placement.cpu_expert_params[sub_idx]
+                    cpu_tasks.append((sub_idx, token_indices, weights, expert_input, params))
                 else:
-                    continue  # 替代 expert 也不可用，跳过
+                    continue
             else:
                 continue
 
-            weighted_output = expert_output * weights.unsqueeze(1)
-            final_output[token_indices] += weighted_output
+        def _prepare_params(params: Dict[str, torch.Tensor], device: torch.device, dtype: torch.dtype) -> Dict[str, torch.Tensor]:
+            if params["gate_proj"].device == device and params["gate_proj"].dtype == dtype:
+                return params
+            return {k: v.to(device=device, dtype=dtype) for k, v in params.items()}
+
+        def _run_cpu_task(task):
+            expert_idx, token_indices, weights, expert_input, params = task
+            cpu_input = expert_input.to("cpu")
+            if cpu_input.dtype != params["gate_proj"].dtype:
+                cpu_input = cpu_input.to(params["gate_proj"].dtype)
+            output_cpu = expert_forward_with_weights(
+                cpu_input,
+                params["gate_proj"], params["up_proj"], params["down_proj"],
+            )
+            output_gpu = output_cpu.to(flat.device, dtype=flat.dtype)
+            return expert_idx, token_indices, weights, output_gpu
+
+        if cpu_tasks and gpu_tasks and flat.is_cuda:
+            with ThreadPoolExecutor(max_workers=min(len(cpu_tasks), 4)) as executor:
+                futures = [executor.submit(_run_cpu_task, task) for task in cpu_tasks]
+                for token_indices, weights, expert_input, params in gpu_tasks:
+                    params = _prepare_params(params, flat.device, flat.dtype)
+                    expert_output = expert_forward_with_weights(
+                        expert_input,
+                        params["gate_proj"], params["up_proj"], params["down_proj"],
+                    )
+                    if expert_output.dtype != flat.dtype:
+                        expert_output = expert_output.to(flat.dtype)
+                    final_output[token_indices] += expert_output * weights.unsqueeze(1)
+                for fut in futures:
+                    _, token_indices, weights, output_gpu = fut.result()
+                    final_output[token_indices] += output_gpu * weights.unsqueeze(1)
+        else:
+            for token_indices, weights, expert_input, params in gpu_tasks:
+                params = _prepare_params(params, flat.device, flat.dtype)
+                expert_output = expert_forward_with_weights(
+                    expert_input,
+                    params["gate_proj"], params["up_proj"], params["down_proj"],
+                )
+                if expert_output.dtype != flat.dtype:
+                    expert_output = expert_output.to(flat.dtype)
+                final_output[token_indices] += expert_output * weights.unsqueeze(1)
+
+            for task in cpu_tasks:
+                _, token_indices, weights, output_gpu = _run_cpu_task(task)
+                final_output[token_indices] += output_gpu * weights.unsqueeze(1)
 
         if need_reshape:
             final_output = final_output.view(b, s, h)

@@ -12,10 +12,10 @@ def apply_rotary_emb(
     cos: torch.Tensor,
     sin: torch.Tensor,
 ) -> torch.Tensor:
-    x1, x2 = torch.chunk(x.float(), 2, dim=-1)
+    x1, x2 = torch.chunk(x, 2, dim=-1)
     y1 = x1 * cos - x2 * sin
     y2 = x2 * cos + x1 * sin
-    return torch.cat((y1, y2), dim=-1).to(x.dtype)
+    return torch.cat((y1, y2), dim=-1)
 
 
 def rotate_half(x: torch.Tensor) -> torch.Tensor:
@@ -52,8 +52,15 @@ class RotaryEmbedding(nn.Module):
         query: torch.Tensor,
         key: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
+        if self.cos_sin_cache.device != positions.device:
+            self.cos_sin_cache = self.cos_sin_cache.to(positions.device)
+            self.cos_cache = self.cos_cache.to(positions.device)
+            self.sin_cache = self.sin_cache.to(positions.device)
         cos_sin = self.cos_sin_cache[positions]
         cos, sin = cos_sin.chunk(2, dim=-1)
+        if cos.dtype != query.dtype:
+            cos = cos.to(dtype=query.dtype)
+            sin = sin.to(dtype=query.dtype)
         query = apply_rotary_emb(query, cos, sin)
         key = apply_rotary_emb(key, cos, sin)
         return query, key
