@@ -95,6 +95,9 @@ class Qwen3ModelRunner(ModelRunner):
         gate = self.layers[layer_idx].mlp.gate
         top_k = self.config.num_experts_per_token
 
+        if hidden_states.dim() == 2:
+            hidden_states = hidden_states.unsqueeze(0)
+
         expert_indices, expert_weights = gate(hidden_states, top_k)
         # expert_indices: [batch_size, seq_len, top_k]
         # expert_weights: [batch_size, seq_len, top_k]

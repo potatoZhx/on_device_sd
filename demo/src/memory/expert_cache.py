@@ -215,6 +215,40 @@ class ExpertCache:
                     completed.append(expert_id)
         return completed
 
+    def get_cache_stats(self) -> Dict[str, float]:
+        """Get cache performance statistics"""
+        total_accesses = self.cache_hits + self.cache_misses
+        hit_rate = self.cache_hits / total_accesses if total_accesses > 0 else 0.0
+
+        return {
+            'hit_rate': hit_rate,
+            'cache_hits': self.cache_hits,
+            'cache_misses': self.cache_misses,
+            'cached_experts': len(self.cached_experts),
+            'utilization': len(self.cached_experts) / self.max_experts if self.max_experts > 0 else 0.0
+        }
+
+    def reset_stats(self) -> None:
+        """Reset cache statistics"""
+        self.cache_hits = 0
+        self.cache_misses = 0
+
+    def clear(self, keep_pinned: bool = True) -> None:
+        """Clear cache, optionally keeping pinned experts"""
+        if keep_pinned:
+            to_remove = [
+                eid for eid in self.cached_experts.keys()
+                if eid not in self.pinned_experts
+            ]
+            for eid in to_remove:
+                del self.cached_experts[eid]
+        else:
+            self.cached_experts.clear()
+            self.pinned_experts.clear()
+
+        self.pending_transfers.clear()
+        logger.info("Expert cache cleared")
+
 
 class AsyncExpertTransfer:
     def __init__(self, max_concurrent: int = 2):
@@ -267,36 +301,3 @@ class AsyncExpertTransfer:
         event, gpu_params = self.pending_events.pop(oldest_id)
         event.synchronize()
         expert_cache.put(oldest_id, gpu_params)
-    
-    def get_cache_stats(self) -> Dict[str, float]:
-        """Get cache performance statistics"""
-        total_accesses = self.cache_hits + self.cache_misses
-        hit_rate = self.cache_hits / total_accesses if total_accesses > 0 else 0.0
-        
-        return {
-            'hit_rate': hit_rate,
-            'cache_hits': self.cache_hits,
-            'cache_misses': self.cache_misses,
-            'cached_experts': len(self.cached_experts),
-            'utilization': len(self.cached_experts) / self.max_experts
-        }
-    
-    def reset_stats(self) -> None:
-        """Reset cache statistics"""
-        self.cache_hits = 0
-        self.cache_misses = 0
-    
-    def clear(self, keep_pinned: bool = True) -> None:
-        """Clear cache, optionally keeping pinned experts"""
-        if keep_pinned:
-            to_remove = [
-                eid for eid in self.cached_experts.keys() 
-                if eid not in self.pinned_experts
-            ]
-            for eid in to_remove:
-                del self.cached_experts[eid]
-        else:
-            self.cached_experts.clear()
-            self.pinned_experts.clear()
-        
-        logger.info("Expert cache cleared")

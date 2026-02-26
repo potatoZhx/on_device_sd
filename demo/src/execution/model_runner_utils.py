@@ -89,16 +89,30 @@ def build_draft_placement(
     num_experts: int,
 ) -> ExpertPlacement:
     """构建 draft 阶段的 placement（含替换）。"""
-    layer_acts = build_layer_activations(routing_result, num_experts)
-
-    cpu_expert_ids = set(draft_scheduler.select_cpu_experts(layer_acts, top_c))
+    gpu_available_experts: Set[ExpertID] = set()
+    for expert_id in routing_result.activated_expert_ids:
+        if _get_gpu_params(expert_id, expert_cache, parameter_loader) is not None:
+            gpu_available_experts.add(expert_id)
 
     activated_expert_ids: Set[ExpertID] = set(routing_result.activated_expert_ids)
+    missing_gpu_experts = activated_expert_ids - gpu_available_experts
 
-    cached_experts: Set[ExpertID] = set()
-    for expert_id in activated_expert_ids:
-        if _get_gpu_params(expert_id, expert_cache, parameter_loader) is not None:
-            cached_experts.add(expert_id)
+    cpu_expert_ids = set()
+    if missing_gpu_experts and top_c > 0:
+        layer_acts = build_layer_activations(routing_result, num_experts)
+        cpu_candidate_acts = [
+            act for act in layer_acts.activations
+            if act.expert_id in missing_gpu_experts
+        ]
+        if cpu_candidate_acts:
+            cpu_layer_acts = LayerExpertActivations(
+                layer_idx=layer_acts.layer_idx,
+                activations=cpu_candidate_acts,
+                routing_scores=layer_acts.routing_scores,
+            )
+            cpu_expert_ids = set(draft_scheduler.select_cpu_experts(cpu_layer_acts, top_c))
+
+    cached_experts: Set[ExpertID] = set(gpu_available_experts)
 
     needs_substitution = activated_expert_ids - cached_experts - cpu_expert_ids
 

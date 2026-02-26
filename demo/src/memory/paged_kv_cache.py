@@ -141,6 +141,7 @@ class SequenceState:
         self.is_in_draft = False
         self.draft_start_num_tokens = 0
         self.draft_start_num_blocks = 0
+        self.draft_token_ids: List[int] = []
         # 不需要备份 block_table，只需记录位置
     
     @property
@@ -200,6 +201,7 @@ class SequenceState:
         self.is_in_draft = True
         self.draft_start_num_tokens = self.num_tokens
         self.draft_start_num_blocks = len(self.block_table)
+        self.draft_token_ids = []
     
     def accept_draft_tokens(self, num_accepted: int):
         """
@@ -211,6 +213,7 @@ class SequenceState:
         # 计算接受后的最终 token 数
         final_num_tokens = self.draft_start_num_tokens + num_accepted
         self.num_tokens = final_num_tokens
+        self.draft_token_ids = self.draft_token_ids[:num_accepted]
         
         # 更新 block_table（移除未使用的 blocks）
         final_num_blocks = (final_num_tokens + self.block_size - 1) // self.block_size
@@ -218,8 +221,6 @@ class SequenceState:
         # 注意：实际的 block 释放由 PagedKVCache 处理
         
         self.is_in_draft = False
-        self.draft_start_num_tokens = 0
-        self.draft_start_num_blocks = 0
 
 
 # ==================== Paged KV Cache Manager ====================
@@ -298,6 +299,27 @@ class PagedKVCache:
             device='cuda'
         )
         return kv_cache
+
+    def _ensure_layer_capacity(self, layer_idx: int) -> None:
+        if layer_idx < self.kv_cache.shape[1]:
+            return
+
+        target_layers = layer_idx + 1
+        expand_layers = target_layers - self.kv_cache.shape[1]
+        if expand_layers <= 0:
+            return
+
+        extra_cache = torch.empty(
+            2,
+            expand_layers,
+            self.num_blocks,
+            self.block_size,
+            self.num_kv_heads * self.head_dim,
+            dtype=self.dtype,
+            device='cuda'
+        )
+        self.kv_cache = torch.cat([self.kv_cache, extra_cache], dim=1)
+        self.num_layers = self.kv_cache.shape[1]
     
     # ==================== Sequence Management ====================
     
@@ -380,6 +402,9 @@ class PagedKVCache:
                 return False
             block_id = self.block_manager.allocate_block()
             seq_state.block_table.append(block_id)
+
+        if seq_state.is_in_draft:
+            seq_state.draft_token_ids.append(0)
         
         return True
     
@@ -404,6 +429,8 @@ class PagedKVCache:
         """
         if seq_id not in self.sequences:
             raise ValueError(f"Sequence {seq_id} not found")
+
+        self._ensure_layer_capacity(layer_idx)
         
         seq_state = self.sequences[seq_id]
         num_tokens = key.shape[0]
@@ -426,6 +453,7 @@ class PagedKVCache:
         Returns:
             k_cache, v_cache: [num_blocks, block_size, num_kv_heads * head_dim]
         """
+        self._ensure_layer_capacity(layer_idx)
         k_cache = self.kv_cache[0, layer_idx]
         v_cache = self.kv_cache[1, layer_idx]
         return k_cache, v_cache
@@ -514,12 +542,20 @@ class PagedKVCache:
     def get_verify_context(self, seq_ids: List[int]) -> Dict:
         slot_mapping = []
         context_lens = []
+        verify_query_lens = []
+        verify_q_indices = []
         max_num_blocks = 0
+        q_offset = 0
 
         for seq_id in seq_ids:
             seq_state = self.sequences[seq_id]
             verify_start = seq_state.draft_start_num_tokens
             num_new_tokens = seq_state.num_tokens - verify_start
+
+            verify_query_lens.append(num_new_tokens + 1)
+            if num_new_tokens > 0:
+                verify_q_indices.extend(range(q_offset + 1, q_offset + 1 + num_new_tokens))
+            q_offset += num_new_tokens + 1
 
             slots = seq_state.get_slot_mapping(verify_start, num_new_tokens)
             slot_mapping.extend(slots)
@@ -537,6 +573,8 @@ class PagedKVCache:
             'slot_mapping': torch.tensor(slot_mapping, dtype=torch.int32, device='cuda'),
             'context_lens': torch.tensor(context_lens, dtype=torch.int32, device='cuda'),
             'block_tables': torch.stack(block_tables),
+            'verify_query_lens': torch.tensor(verify_query_lens, dtype=torch.int32, device='cuda'),
+            'verify_q_indices': torch.tensor(verify_q_indices, dtype=torch.int32, device='cuda'),
         }
     
     # ==================== Draft-Verify Support ====================
@@ -601,8 +639,7 @@ class PagedKVCache:
         # 更新状态
         draft_seq.accept_draft_tokens(num_accepted_tokens)
         
-        # 清理 verify sequence
-        self.remove_sequence(verify_seq_id)
+        # 保留 verify sequence 供一致性检查与调试
         
         logger.debug(f"Replaced draft cache for seq {seq_id}, "
                     f"accepted {num_accepted_tokens} tokens, "
@@ -626,10 +663,7 @@ class PagedKVCache:
                 self.block_manager.deallocate_block(block_id)
 
         seq_state.block_table = seq_state.block_table[:final_num_blocks]
-        seq_state.num_tokens = final_num_tokens
-        seq_state.is_in_draft = False
-        seq_state.draft_start_num_tokens = 0
-        seq_state.draft_start_num_blocks = 0
+        seq_state.accept_draft_tokens(num_accepted_tokens)
     
     # ==================== Utilities ====================
     

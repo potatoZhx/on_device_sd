@@ -1,7 +1,7 @@
 from typing import List, Dict, Optional
 import numpy as np
 from .base_scheduler import PrefetchStrategy
-from ..core.types import ExpertID, LayerExpertActivations
+from ..core.types import DeviceType, ExpertID, LayerExpertActivations
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)

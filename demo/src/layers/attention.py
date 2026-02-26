@@ -215,8 +215,14 @@ class Qwen3Attention(nn.Module):
         # Store current KV
         if context['slot_mapping'].numel() > 0:
             if is_verify:
-                num_new_tokens = context['slot_mapping'].numel()
-                store_kvcache(k[-num_new_tokens:], v[-num_new_tokens:], k_cache_layer, v_cache_layer, context['slot_mapping'])
+                if 'verify_q_indices' in context and context['verify_q_indices'].numel() > 0:
+                    verify_q_indices = context['verify_q_indices'].to(dtype=torch.long)
+                    k_verify = k.index_select(0, verify_q_indices)
+                    v_verify = v.index_select(0, verify_q_indices)
+                    store_kvcache(k_verify, v_verify, k_cache_layer, v_cache_layer, context['slot_mapping'])
+                else:
+                    num_new_tokens = context['slot_mapping'].numel()
+                    store_kvcache(k[-num_new_tokens:], v[-num_new_tokens:], k_cache_layer, v_cache_layer, context['slot_mapping'])
             else:
                 store_kvcache(k, v, k_cache_layer, v_cache_layer, context['slot_mapping'])
         
@@ -234,35 +240,116 @@ class Qwen3Attention(nn.Module):
             )
         else:
             # Decode: use kvcache API
-            # flash_attn_with_kvcache expects KV cache in [num_blocks, block_size, num_kv_heads, head_dim]
-            k_cache_view = k_cache_layer.view(
-                k_cache_layer.shape[0],
-                k_cache_layer.shape[1],
-                self.num_kv_heads,
-                self.head_dim,
+            use_flash_decode = (
+                FLASH_ATTN_AVAILABLE
+                and kv_cache.block_size % 256 == 0
+                and (not is_verify or len(seq_ids) == 1)
             )
-            v_cache_view = v_cache_layer.view(
-                v_cache_layer.shape[0],
-                v_cache_layer.shape[1],
-                self.num_kv_heads,
-                self.head_dim,
-            )
-            attn_output = flash_attn_with_kvcache(
-                q.unsqueeze(0) if is_verify else q.unsqueeze(1),
-                k_cache_view,
-                v_cache_view,
-                cache_seqlens=context['context_lens'],
-                block_table=context['block_tables'],
-                softmax_scale=self.scaling,
-                causal=True,
-            )
-            attn_output = attn_output.squeeze(1)  # [num_tokens, num_heads, head_dim]
+            if use_flash_decode:
+                # flash_attn_with_kvcache expects KV cache in [num_blocks, block_size, num_kv_heads, head_dim]
+                k_cache_view = k_cache_layer.view(
+                    k_cache_layer.shape[0],
+                    k_cache_layer.shape[1],
+                    self.num_kv_heads,
+                    self.head_dim,
+                )
+                v_cache_view = v_cache_layer.view(
+                    v_cache_layer.shape[0],
+                    v_cache_layer.shape[1],
+                    self.num_kv_heads,
+                    self.head_dim,
+                )
+                attn_output = flash_attn_with_kvcache(
+                    q.unsqueeze(0) if is_verify else q.unsqueeze(1),
+                    k_cache_view,
+                    v_cache_view,
+                    cache_seqlens=context['context_lens'],
+                    block_table=context['block_tables'],
+                    softmax_scale=self.scaling,
+                    causal=True,
+                )
+                attn_output = attn_output.squeeze(1)  # [num_tokens, num_heads, head_dim]
+            else:
+                attn_output = self._fallback_decode_attention(
+                    q=q,
+                    k_cache_layer=k_cache_layer,
+                    v_cache_layer=v_cache_layer,
+                    kv_cache=kv_cache,
+                    seq_ids=seq_ids,
+                    context_lens=context['context_lens'],
+                    is_verify=is_verify,
+                    verify_query_lens=context.get('verify_query_lens'),
+                )
         
         # Reshape and apply output projection
         attn_output = attn_output.view(num_tokens, self.num_heads * self.head_dim)
         output = self.o_proj(attn_output)
         
         return output
+
+    def _fallback_decode_attention(
+        self,
+        q: torch.Tensor,
+        k_cache_layer: torch.Tensor,
+        v_cache_layer: torch.Tensor,
+        kv_cache: PagedKVCache,
+        seq_ids: list[int],
+        context_lens: torch.Tensor,
+        is_verify: bool,
+        verify_query_lens: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        outputs = []
+        if is_verify:
+            if verify_query_lens is not None and verify_query_lens.numel() == len(seq_ids):
+                q_split_sizes = [int(x.item()) for x in verify_query_lens]
+                q_splits = list(q.split(q_split_sizes, dim=0))
+            else:
+                q_splits = [q]
+        else:
+            q_splits = list(q.split(1, dim=0))
+
+        k_cache_flat = k_cache_layer.view(-1, self.num_kv_heads * self.head_dim)
+        v_cache_flat = v_cache_layer.view(-1, self.num_kv_heads * self.head_dim)
+
+        for idx, seq_id in enumerate(seq_ids):
+            q_seq = q_splits[idx]
+            seq_len = int(context_lens[idx].item())
+            seq_state = kv_cache.sequences[seq_id]
+            slots = seq_state.get_slot_mapping(0, seq_len)
+            slot_tensor = torch.tensor(slots, dtype=torch.long, device=q.device)
+
+            k_seq = k_cache_flat.index_select(0, slot_tensor).view(seq_len, self.num_kv_heads, self.head_dim)
+            v_seq = v_cache_flat.index_select(0, slot_tensor).view(seq_len, self.num_kv_heads, self.head_dim)
+
+            if self.num_kv_heads != self.num_heads:
+                repeat_factor = self.num_heads // self.num_kv_heads
+                k_seq = k_seq.repeat_interleave(repeat_factor, dim=1)
+                v_seq = v_seq.repeat_interleave(repeat_factor, dim=1)
+
+            q_len = q_seq.shape[0]
+            k_len = seq_len
+            causal_offset = k_len - q_len
+            disallow_mask = torch.triu(
+                torch.ones((q_len, k_len), device=q.device, dtype=torch.bool),
+                diagonal=causal_offset + 1,
+            )
+            attn_bias = torch.zeros((q_len, k_len), device=q.device, dtype=q.dtype)
+            attn_bias = attn_bias.masked_fill(disallow_mask, float("-inf"))
+
+            q_t = q_seq.transpose(0, 1).unsqueeze(0)
+            k_t = k_seq.transpose(0, 1).unsqueeze(0)
+            v_t = v_seq.transpose(0, 1).unsqueeze(0)
+            out = F.scaled_dot_product_attention(
+                q_t,
+                k_t,
+                v_t,
+                attn_mask=attn_bias,
+                dropout_p=0.0,
+                is_causal=False,
+            )
+            outputs.append(out.squeeze(0).transpose(0, 1))
+
+        return torch.cat(outputs, dim=0)
 
 
 class Qwen3AttentionWithWeights:
