@@ -1,0 +1,133 @@
+{"sample_idx": 0, "round": 1, "cache_rate": 0.25, "draft_len": 1, "context_len": 205, "draft_tokens": [20205], "target_tokens": [20205], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 0, "round": 2, "cache_rate": 0.25, "draft_len": 1, "context_len": 206, "draft_tokens": [389], "target_tokens": [389], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 0, "round": 3, "cache_rate": 0.25, "draft_len": 1, "context_len": 207, "draft_tokens": [279], "target_tokens": [279], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 0, "round": 4, "cache_rate": 0.25, "draft_len": 1, "context_len": 208, "draft_tokens": [6049], "target_tokens": [6049], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 0, "round": 5, "cache_rate": 0.25, "draft_len": 1, "context_len": 209, "draft_tokens": [1995], "target_tokens": [1995], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 0, "round": 6, "cache_rate": 0.25, "draft_len": 1, "context_len": 210, "draft_tokens": [11], "target_tokens": [11], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 0, "round": 7, "cache_rate": 0.25, "draft_len": 1, "context_len": 211, "draft_tokens": [421], "target_tokens": [421], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 0, "round": 8, "cache_rate": 0.25, "draft_len": 1, "context_len": 212, "draft_tokens": [422], "target_tokens": [422], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 1, "round": 9, "cache_rate": 0.25, "draft_len": 1, "context_len": 125, "draft_tokens": [11268], "target_tokens": [1416], "prefix_accepted": 0, "position_matches": 0}
+{"sample_idx": 1, "round": 10, "cache_rate": 0.25, "draft_len": 1, "context_len": 126, "draft_tokens": [11268], "target_tokens": [8364], "prefix_accepted": 0, "position_matches": 0}
+{"sample_idx": 1, "round": 11, "cache_rate": 0.25, "draft_len": 1, "context_len": 127, "draft_tokens": [374], "target_tokens": [374], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 1, "round": 12, "cache_rate": 0.25, "draft_len": 1, "context_len": 128, "draft_tokens": [16364], "target_tokens": [16364], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 1, "round": 13, "cache_rate": 0.25, "draft_len": 1, "context_len": 129, "draft_tokens": [594], "target_tokens": [594], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 1, "round": 14, "cache_rate": 0.25, "draft_len": 1, "context_len": 130, "draft_tokens": [4438], "target_tokens": [4438], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 1, "round": 15, "cache_rate": 0.25, "draft_len": 1, "context_len": 131, "draft_tokens": [11], "target_tokens": [11], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 1, "round": 16, "cache_rate": 0.25, "draft_len": 1, "context_len": 132, "draft_tokens": [1221], "target_tokens": [1221], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 2, "round": 17, "cache_rate": 0.25, "draft_len": 1, "context_len": 208, "draft_tokens": [2055], "target_tokens": [2055], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 2, "round": 18, "cache_rate": 0.25, "draft_len": 1, "context_len": 209, "draft_tokens": [279], "target_tokens": [279], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 2, "round": 19, "cache_rate": 0.25, "draft_len": 1, "context_len": 210, "draft_tokens": [4226], "target_tokens": [4226], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 2, "round": 20, "cache_rate": 0.25, "draft_len": 1, "context_len": 211, "draft_tokens": [374], "target_tokens": [374], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 2, "round": 21, "cache_rate": 0.25, "draft_len": 1, "context_len": 212, "draft_tokens": [63514], "target_tokens": [63514], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 2, "round": 22, "cache_rate": 0.25, "draft_len": 1, "context_len": 213, "draft_tokens": [705], "target_tokens": [705], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 2, "round": 23, "cache_rate": 0.25, "draft_len": 1, "context_len": 214, "draft_tokens": [13], "target_tokens": [13], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 2, "round": 24, "cache_rate": 0.25, "draft_len": 1, "context_len": 215, "draft_tokens": [151643], "target_tokens": [151643], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 0, "round": 1, "cache_rate": 0.25, "draft_len": 2, "context_len": 205, "draft_tokens": [20205, 389], "target_tokens": [20205, 389], "prefix_accepted": 2, "position_matches": 2}
+{"sample_idx": 0, "round": 2, "cache_rate": 0.25, "draft_len": 2, "context_len": 207, "draft_tokens": [279, 6049], "target_tokens": [279, 6049], "prefix_accepted": 2, "position_matches": 2}
+{"sample_idx": 0, "round": 3, "cache_rate": 0.25, "draft_len": 2, "context_len": 209, "draft_tokens": [1995, 11], "target_tokens": [1995, 11], "prefix_accepted": 2, "position_matches": 2}
+{"sample_idx": 0, "round": 4, "cache_rate": 0.25, "draft_len": 2, "context_len": 211, "draft_tokens": [421, 422], "target_tokens": [421, 422], "prefix_accepted": 2, "position_matches": 2}
+{"sample_idx": 1, "round": 5, "cache_rate": 0.25, "draft_len": 2, "context_len": 125, "draft_tokens": [11268, 374], "target_tokens": [1416, 1035], "prefix_accepted": 0, "position_matches": 0}
+{"sample_idx": 1, "round": 6, "cache_rate": 0.25, "draft_len": 2, "context_len": 126, "draft_tokens": [11268, 374], "target_tokens": [8364, 374], "prefix_accepted": 0, "position_matches": 1}
+{"sample_idx": 1, "round": 7, "cache_rate": 0.25, "draft_len": 2, "context_len": 127, "draft_tokens": [374, 16364], "target_tokens": [374, 16364], "prefix_accepted": 2, "position_matches": 2}
+{"sample_idx": 1, "round": 8, "cache_rate": 0.25, "draft_len": 2, "context_len": 129, "draft_tokens": [594, 4438], "target_tokens": [594, 4438], "prefix_accepted": 2, "position_matches": 2}
+{"sample_idx": 1, "round": 9, "cache_rate": 0.25, "draft_len": 2, "context_len": 131, "draft_tokens": [11, 1221], "target_tokens": [11, 1221], "prefix_accepted": 2, "position_matches": 2}
+{"sample_idx": 2, "round": 10, "cache_rate": 0.25, "draft_len": 2, "context_len": 208, "draft_tokens": [2055, 279], "target_tokens": [2055, 279], "prefix_accepted": 2, "position_matches": 2}
+{"sample_idx": 2, "round": 11, "cache_rate": 0.25, "draft_len": 2, "context_len": 210, "draft_tokens": [4226, 374], "target_tokens": [4226, 374], "prefix_accepted": 2, "position_matches": 2}
+{"sample_idx": 2, "round": 12, "cache_rate": 0.25, "draft_len": 2, "context_len": 212, "draft_tokens": [63514, 705], "target_tokens": [63514, 705], "prefix_accepted": 2, "position_matches": 2}
+{"sample_idx": 2, "round": 13, "cache_rate": 0.25, "draft_len": 2, "context_len": 214, "draft_tokens": [13, 151643], "target_tokens": [13, 151643], "prefix_accepted": 2, "position_matches": 2}
+{"sample_idx": 0, "round": 1, "cache_rate": 0.25, "draft_len": 4, "context_len": 205, "draft_tokens": [20205, 389, 279, 6049], "target_tokens": [20205, 389, 279, 6049], "prefix_accepted": 4, "position_matches": 4}
+{"sample_idx": 0, "round": 2, "cache_rate": 0.25, "draft_len": 4, "context_len": 209, "draft_tokens": [1995, 11, 421, 422], "target_tokens": [1995, 11, 421, 422], "prefix_accepted": 4, "position_matches": 4}
+{"sample_idx": 1, "round": 3, "cache_rate": 0.25, "draft_len": 4, "context_len": 125, "draft_tokens": [11268, 374, 8364, 594], "target_tokens": [1416, 1035, 16364, 594], "prefix_accepted": 0, "position_matches": 1}
+{"sample_idx": 1, "round": 4, "cache_rate": 0.25, "draft_len": 4, "context_len": 126, "draft_tokens": [11268, 374, 6798, 594], "target_tokens": [8364, 374, 6798, 594], "prefix_accepted": 0, "position_matches": 3}
+{"sample_idx": 1, "round": 5, "cache_rate": 0.25, "draft_len": 4, "context_len": 127, "draft_tokens": [374, 11268, 594, 35171], "target_tokens": [374, 16364, 594, 35171], "prefix_accepted": 1, "position_matches": 3}
+{"sample_idx": 1, "round": 6, "cache_rate": 0.25, "draft_len": 4, "context_len": 129, "draft_tokens": [594, 4438, 11, 1221], "target_tokens": [594, 4438, 11, 1221], "prefix_accepted": 4, "position_matches": 4}
+{"sample_idx": 2, "round": 7, "cache_rate": 0.25, "draft_len": 4, "context_len": 208, "draft_tokens": [2055, 279, 4226, 374], "target_tokens": [2055, 279, 4226, 374], "prefix_accepted": 4, "position_matches": 4}
+{"sample_idx": 2, "round": 8, "cache_rate": 0.25, "draft_len": 4, "context_len": 212, "draft_tokens": [63514, 705, 13, 151643], "target_tokens": [63514, 705, 13, 151643], "prefix_accepted": 4, "position_matches": 4}
+{"sample_idx": 0, "round": 1, "cache_rate": 0.5, "draft_len": 1, "context_len": 205, "draft_tokens": [20205], "target_tokens": [20205], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 0, "round": 2, "cache_rate": 0.5, "draft_len": 1, "context_len": 206, "draft_tokens": [389], "target_tokens": [389], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 0, "round": 3, "cache_rate": 0.5, "draft_len": 1, "context_len": 207, "draft_tokens": [279], "target_tokens": [279], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 0, "round": 4, "cache_rate": 0.5, "draft_len": 1, "context_len": 208, "draft_tokens": [6049], "target_tokens": [6049], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 0, "round": 5, "cache_rate": 0.5, "draft_len": 1, "context_len": 209, "draft_tokens": [1995], "target_tokens": [1995], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 0, "round": 6, "cache_rate": 0.5, "draft_len": 1, "context_len": 210, "draft_tokens": [11], "target_tokens": [11], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 0, "round": 7, "cache_rate": 0.5, "draft_len": 1, "context_len": 211, "draft_tokens": [421], "target_tokens": [421], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 0, "round": 8, "cache_rate": 0.5, "draft_len": 1, "context_len": 212, "draft_tokens": [422], "target_tokens": [422], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 1, "round": 9, "cache_rate": 0.5, "draft_len": 1, "context_len": 125, "draft_tokens": [11268], "target_tokens": [1416], "prefix_accepted": 0, "position_matches": 0}
+{"sample_idx": 1, "round": 10, "cache_rate": 0.5, "draft_len": 1, "context_len": 126, "draft_tokens": [6798], "target_tokens": [498], "prefix_accepted": 0, "position_matches": 0}
+{"sample_idx": 1, "round": 11, "cache_rate": 0.5, "draft_len": 1, "context_len": 127, "draft_tokens": [614], "target_tokens": [614], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 1, "round": 12, "cache_rate": 0.5, "draft_len": 1, "context_len": 128, "draft_tokens": [894], "target_tokens": [894], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 1, "round": 13, "cache_rate": 0.5, "draft_len": 1, "context_len": 129, "draft_tokens": [803], "target_tokens": [803], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 1, "round": 14, "cache_rate": 0.5, "draft_len": 1, "context_len": 130, "draft_tokens": [4755], "target_tokens": [4755], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 1, "round": 15, "cache_rate": 0.5, "draft_len": 1, "context_len": 131, "draft_tokens": [11], "target_tokens": [11], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 1, "round": 16, "cache_rate": 0.5, "draft_len": 1, "context_len": 132, "draft_tokens": [2666], "target_tokens": [2666], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 2, "round": 17, "cache_rate": 0.5, "draft_len": 1, "context_len": 208, "draft_tokens": [2055], "target_tokens": [2055], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 2, "round": 18, "cache_rate": 0.5, "draft_len": 1, "context_len": 209, "draft_tokens": [279], "target_tokens": [279], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 2, "round": 19, "cache_rate": 0.5, "draft_len": 1, "context_len": 210, "draft_tokens": [4226], "target_tokens": [4226], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 2, "round": 20, "cache_rate": 0.5, "draft_len": 1, "context_len": 211, "draft_tokens": [374], "target_tokens": [374], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 2, "round": 21, "cache_rate": 0.5, "draft_len": 1, "context_len": 212, "draft_tokens": [63514], "target_tokens": [63514], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 2, "round": 22, "cache_rate": 0.5, "draft_len": 1, "context_len": 213, "draft_tokens": [705], "target_tokens": [705], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 2, "round": 23, "cache_rate": 0.5, "draft_len": 1, "context_len": 214, "draft_tokens": [13], "target_tokens": [13], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 2, "round": 24, "cache_rate": 0.5, "draft_len": 1, "context_len": 215, "draft_tokens": [151643], "target_tokens": [151643], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 0, "round": 1, "cache_rate": 0.5, "draft_len": 2, "context_len": 205, "draft_tokens": [20205, 389], "target_tokens": [20205, 389], "prefix_accepted": 2, "position_matches": 2}
+{"sample_idx": 0, "round": 2, "cache_rate": 0.5, "draft_len": 2, "context_len": 207, "draft_tokens": [279, 6049], "target_tokens": [279, 6049], "prefix_accepted": 2, "position_matches": 2}
+{"sample_idx": 0, "round": 3, "cache_rate": 0.5, "draft_len": 2, "context_len": 209, "draft_tokens": [1995, 11], "target_tokens": [1995, 11], "prefix_accepted": 2, "position_matches": 2}
+{"sample_idx": 0, "round": 4, "cache_rate": 0.5, "draft_len": 2, "context_len": 211, "draft_tokens": [421, 422], "target_tokens": [421, 422], "prefix_accepted": 2, "position_matches": 2}
+{"sample_idx": 1, "round": 5, "cache_rate": 0.5, "draft_len": 2, "context_len": 125, "draft_tokens": [11268, 1035], "target_tokens": [1416, 1035], "prefix_accepted": 0, "position_matches": 1}
+{"sample_idx": 1, "round": 6, "cache_rate": 0.5, "draft_len": 2, "context_len": 126, "draft_tokens": [8364, 374], "target_tokens": [10244, 374], "prefix_accepted": 0, "position_matches": 1}
+{"sample_idx": 1, "round": 7, "cache_rate": 0.5, "draft_len": 2, "context_len": 127, "draft_tokens": [374, 8364], "target_tokens": [374, 8364], "prefix_accepted": 2, "position_matches": 2}
+{"sample_idx": 1, "round": 8, "cache_rate": 0.5, "draft_len": 2, "context_len": 129, "draft_tokens": [594, 6554], "target_tokens": [594, 6554], "prefix_accepted": 2, "position_matches": 2}
+{"sample_idx": 1, "round": 9, "cache_rate": 0.5, "draft_len": 2, "context_len": 131, "draft_tokens": [11, 323], "target_tokens": [11, 323], "prefix_accepted": 2, "position_matches": 2}
+{"sample_idx": 2, "round": 10, "cache_rate": 0.5, "draft_len": 2, "context_len": 208, "draft_tokens": [2055, 279], "target_tokens": [2055, 279], "prefix_accepted": 2, "position_matches": 2}
+{"sample_idx": 2, "round": 11, "cache_rate": 0.5, "draft_len": 2, "context_len": 210, "draft_tokens": [4226, 374], "target_tokens": [4226, 374], "prefix_accepted": 2, "position_matches": 2}
+{"sample_idx": 2, "round": 12, "cache_rate": 0.5, "draft_len": 2, "context_len": 212, "draft_tokens": [63514, 705], "target_tokens": [63514, 705], "prefix_accepted": 2, "position_matches": 2}
+{"sample_idx": 2, "round": 13, "cache_rate": 0.5, "draft_len": 2, "context_len": 214, "draft_tokens": [13, 151643], "target_tokens": [13, 151643], "prefix_accepted": 2, "position_matches": 2}
+{"sample_idx": 0, "round": 1, "cache_rate": 0.5, "draft_len": 4, "context_len": 205, "draft_tokens": [20205, 389, 279, 6049], "target_tokens": [20205, 389, 279, 6049], "prefix_accepted": 4, "position_matches": 4}
+{"sample_idx": 0, "round": 2, "cache_rate": 0.5, "draft_len": 4, "context_len": 209, "draft_tokens": [1995, 11, 421, 422], "target_tokens": [1995, 11, 421, 422], "prefix_accepted": 4, "position_matches": 4}
+{"sample_idx": 1, "round": 3, "cache_rate": 0.5, "draft_len": 4, "context_len": 125, "draft_tokens": [11268, 1035, 1618, 8364], "target_tokens": [1416, 1035, 1618, 8364], "prefix_accepted": 0, "position_matches": 3}
+{"sample_idx": 1, "round": 4, "cache_rate": 0.5, "draft_len": 4, "context_len": 126, "draft_tokens": [8364, 374, 16364, 594], "target_tokens": [11268, 374, 16364, 594], "prefix_accepted": 0, "position_matches": 3}
+{"sample_idx": 1, "round": 5, "cache_rate": 0.5, "draft_len": 4, "context_len": 127, "draft_tokens": [374, 6798, 594, 4438], "target_tokens": [374, 6798, 594, 4438], "prefix_accepted": 4, "position_matches": 4}
+{"sample_idx": 1, "round": 6, "cache_rate": 0.5, "draft_len": 4, "context_len": 131, "draft_tokens": [11, 1221], "target_tokens": [11, 1221], "prefix_accepted": 2, "position_matches": 2}
+{"sample_idx": 2, "round": 7, "cache_rate": 0.5, "draft_len": 4, "context_len": 208, "draft_tokens": [2055, 279, 4226, 374], "target_tokens": [2055, 279, 4226, 374], "prefix_accepted": 4, "position_matches": 4}
+{"sample_idx": 2, "round": 8, "cache_rate": 0.5, "draft_len": 4, "context_len": 212, "draft_tokens": [63514, 705, 13, 151643], "target_tokens": [63514, 705, 13, 151643], "prefix_accepted": 4, "position_matches": 4}
+{"sample_idx": 0, "round": 1, "cache_rate": 1.0, "draft_len": 1, "context_len": 205, "draft_tokens": [20205], "target_tokens": [20205], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 0, "round": 2, "cache_rate": 1.0, "draft_len": 1, "context_len": 206, "draft_tokens": [389], "target_tokens": [389], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 0, "round": 3, "cache_rate": 1.0, "draft_len": 1, "context_len": 207, "draft_tokens": [279], "target_tokens": [279], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 0, "round": 4, "cache_rate": 1.0, "draft_len": 1, "context_len": 208, "draft_tokens": [6049], "target_tokens": [6049], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 0, "round": 5, "cache_rate": 1.0, "draft_len": 1, "context_len": 209, "draft_tokens": [1995], "target_tokens": [1995], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 0, "round": 6, "cache_rate": 1.0, "draft_len": 1, "context_len": 210, "draft_tokens": [11], "target_tokens": [11], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 0, "round": 7, "cache_rate": 1.0, "draft_len": 1, "context_len": 211, "draft_tokens": [421], "target_tokens": [421], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 0, "round": 8, "cache_rate": 1.0, "draft_len": 1, "context_len": 212, "draft_tokens": [422], "target_tokens": [422], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 1, "round": 9, "cache_rate": 1.0, "draft_len": 1, "context_len": 125, "draft_tokens": [1416], "target_tokens": [1416], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 1, "round": 10, "cache_rate": 1.0, "draft_len": 1, "context_len": 126, "draft_tokens": [8364], "target_tokens": [8364], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 1, "round": 11, "cache_rate": 1.0, "draft_len": 1, "context_len": 127, "draft_tokens": [374], "target_tokens": [374], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 1, "round": 12, "cache_rate": 1.0, "draft_len": 1, "context_len": 128, "draft_tokens": [16364], "target_tokens": [16364], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 1, "round": 13, "cache_rate": 1.0, "draft_len": 1, "context_len": 129, "draft_tokens": [594], "target_tokens": [594], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 1, "round": 14, "cache_rate": 1.0, "draft_len": 1, "context_len": 130, "draft_tokens": [4438], "target_tokens": [4438], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 1, "round": 15, "cache_rate": 1.0, "draft_len": 1, "context_len": 131, "draft_tokens": [11], "target_tokens": [11], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 1, "round": 16, "cache_rate": 1.0, "draft_len": 1, "context_len": 132, "draft_tokens": [1221], "target_tokens": [1221], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 2, "round": 17, "cache_rate": 1.0, "draft_len": 1, "context_len": 208, "draft_tokens": [2055], "target_tokens": [2055], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 2, "round": 18, "cache_rate": 1.0, "draft_len": 1, "context_len": 209, "draft_tokens": [279], "target_tokens": [279], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 2, "round": 19, "cache_rate": 1.0, "draft_len": 1, "context_len": 210, "draft_tokens": [4226], "target_tokens": [4226], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 2, "round": 20, "cache_rate": 1.0, "draft_len": 1, "context_len": 211, "draft_tokens": [374], "target_tokens": [374], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 2, "round": 21, "cache_rate": 1.0, "draft_len": 1, "context_len": 212, "draft_tokens": [63514], "target_tokens": [63514], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 2, "round": 22, "cache_rate": 1.0, "draft_len": 1, "context_len": 213, "draft_tokens": [705], "target_tokens": [705], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 2, "round": 23, "cache_rate": 1.0, "draft_len": 1, "context_len": 214, "draft_tokens": [13], "target_tokens": [13], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 2, "round": 24, "cache_rate": 1.0, "draft_len": 1, "context_len": 215, "draft_tokens": [151643], "target_tokens": [151643], "prefix_accepted": 1, "position_matches": 1}
+{"sample_idx": 0, "round": 1, "cache_rate": 1.0, "draft_len": 2, "context_len": 205, "draft_tokens": [20205, 389], "target_tokens": [20205, 389], "prefix_accepted": 2, "position_matches": 2}
+{"sample_idx": 0, "round": 2, "cache_rate": 1.0, "draft_len": 2, "context_len": 207, "draft_tokens": [279, 6049], "target_tokens": [279, 6049], "prefix_accepted": 2, "position_matches": 2}
+{"sample_idx": 0, "round": 3, "cache_rate": 1.0, "draft_len": 2, "context_len": 209, "draft_tokens": [1995, 11], "target_tokens": [1995, 11], "prefix_accepted": 2, "position_matches": 2}
+{"sample_idx": 0, "round": 4, "cache_rate": 1.0, "draft_len": 2, "context_len": 211, "draft_tokens": [421, 422], "target_tokens": [421, 422], "prefix_accepted": 2, "position_matches": 2}
+{"sample_idx": 1, "round": 5, "cache_rate": 1.0, "draft_len": 2, "context_len": 125, "draft_tokens": [1416, 8364], "target_tokens": [1416, 8364], "prefix_accepted": 2, "position_matches": 2}
+{"sample_idx": 1, "round": 6, "cache_rate": 1.0, "draft_len": 2, "context_len": 127, "draft_tokens": [374, 16364], "target_tokens": [374, 16364], "prefix_accepted": 2, "position_matches": 2}
+{"sample_idx": 1, "round": 7, "cache_rate": 1.0, "draft_len": 2, "context_len": 129, "draft_tokens": [594, 4438], "target_tokens": [594, 4438], "prefix_accepted": 2, "position_matches": 2}
+{"sample_idx": 1, "round": 8, "cache_rate": 1.0, "draft_len": 2, "context_len": 131, "draft_tokens": [11, 1221], "target_tokens": [11, 1221], "prefix_accepted": 2, "position_matches": 2}
+{"sample_idx": 2, "round": 9, "cache_rate": 1.0, "draft_len": 2, "context_len": 208, "draft_tokens": [2055, 279], "target_tokens": [2055, 279], "prefix_accepted": 2, "position_matches": 2}
+{"sample_idx": 2, "round": 10, "cache_rate": 1.0, "draft_len": 2, "context_len": 210, "draft_tokens": [4226, 374], "target_tokens": [4226, 374], "prefix_accepted": 2, "position_matches": 2}
+{"sample_idx": 2, "round": 11, "cache_rate": 1.0, "draft_len": 2, "context_len": 212, "draft_tokens": [63514, 705], "target_tokens": [63514, 705], "prefix_accepted": 2, "position_matches": 2}
+{"sample_idx": 2, "round": 12, "cache_rate": 1.0, "draft_len": 2, "context_len": 214, "draft_tokens": [13, 151643], "target_tokens": [13, 151643], "prefix_accepted": 2, "position_matches": 2}
+{"sample_idx": 0, "round": 1, "cache_rate": 1.0, "draft_len": 4, "context_len": 205, "draft_tokens": [20205, 389, 279, 6049], "target_tokens": [20205, 389, 279, 6049], "prefix_accepted": 4, "position_matches": 4}
+{"sample_idx": 0, "round": 2, "cache_rate": 1.0, "draft_len": 4, "context_len": 209, "draft_tokens": [1995, 11, 421, 422], "target_tokens": [1995, 11, 421, 422], "prefix_accepted": 4, "position_matches": 4}
+{"sample_idx": 1, "round": 3, "cache_rate": 1.0, "draft_len": 4, "context_len": 125, "draft_tokens": [1416, 8364, 374, 16364], "target_tokens": [1416, 498, 374, 16364], "prefix_accepted": 1, "position_matches": 3}
+{"sample_idx": 1, "round": 4, "cache_rate": 1.0, "draft_len": 4, "context_len": 127, "draft_tokens": [614, 894, 803, 4755], "target_tokens": [614, 894, 803, 4755], "prefix_accepted": 4, "position_matches": 4}
+{"sample_idx": 1, "round": 5, "cache_rate": 1.0, "draft_len": 4, "context_len": 131, "draft_tokens": [11, 2666], "target_tokens": [11, 2666], "prefix_accepted": 2, "position_matches": 2}
+{"sample_idx": 2, "round": 6, "cache_rate": 1.0, "draft_len": 4, "context_len": 208, "draft_tokens": [2055, 279, 4226, 374], "target_tokens": [2055, 279, 4226, 374], "prefix_accepted": 4, "position_matches": 4}
+{"sample_idx": 2, "round": 7, "cache_rate": 1.0, "draft_len": 4, "context_len": 212, "draft_tokens": [63514, 705, 13, 151643], "target_tokens": [63514, 705, 13, 151643], "prefix_accepted": 4, "position_matches": 4}

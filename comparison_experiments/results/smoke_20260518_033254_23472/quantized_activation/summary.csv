@@ -1,0 +1,3 @@
+cache_rate,draft_len,samples,rounds,drafted_tokens,prefix_accepted_tokens,position_matched_tokens,prefix_acceptance_rate,position_match_rate,full_round_acceptance_rate,avg_prefix_accepted_per_round,generated_tokens,draft_cache_hit_rate,target_cache_hit_rate,expert_hard_match_rate,expert_soft_match_rate,elapsed_sec
+0.5,1,1,2,2,2,2,1.0,1.0,1.0,1.0,2,0.6119791666666666,0.90234375,0.010416666666666666,0.09375,4.683326005935669
+0.5,2,1,1,2,2,2,1.0,1.0,1.0,2.0,2,0.5989583333333334,0.9153645833333334,0.010416666666666666,0.09375,3.085188627243042

@@ -1,0 +1,46 @@
+{
+  "model_path": "/data2/group_谈海生/lagin/models/Qwen3-30B-A3B-Base",
+  "quantized_model_dir": "/data2/group_谈海生/lagin/models/Qwen3-30B-A3B-Base-experts-int4-g128",
+  "data_file": "/data2/group_谈海生/lagin/data/mtbench101/mtbench101.jsonl",
+  "cache_rates": [
+    0.25,
+    0.5,
+    0.75,
+    1.0
+  ],
+  "draft_lengths": [
+    10
+  ],
+  "max_samples": 50,
+  "max_prompt_tokens": 512,
+  "max_new_tokens": 100,
+  "initial_cache_policy": "tail",
+  "output_dir": "./comparison_experiments/results/full_20260519_192941_24141/speq_int4",
+  "seed": 2026,
+  "dtype": "bf16",
+  "quantized_weight_device": "cuda",
+  "wrapped_layers": 48,
+  "method": "moe_speq_int4_expert_draft",
+  "quantization": {
+    "method": "symmetric_groupwise_int4",
+    "paper_reference": "MoE-SpeQ draft ratio: INT4 expert linears, group_size=128",
+    "bits": 4,
+    "group_size": 128,
+    "quantized_modules": "all Linear layers inside routed expert modules",
+    "fp16_modules": [
+      "router/gate",
+      "attention",
+      "normalization",
+      "embeddings",
+      "lm_head",
+      "shared_experts",
+      "non_expert_parameters"
+    ]
+  },
+  "primary_metric": "prefix_acceptance_rate",
+  "expert_metrics": [
+    "expert_hard_match_rate",
+    "expert_soft_match_rate",
+    "target_cache_hit_rate"
+  ]
+}

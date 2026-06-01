@@ -1,0 +1,28 @@
+{
+  "model_path": "/data2/group_谈海生/lagin/models/Qwen3-30B-A3B-Base",
+  "data_file": "/data2/group_谈海生/lagin/data/mtbench101/mtbench101.jsonl",
+  "cache_rates": [
+    0.5
+  ],
+  "draft_lengths": [
+    1,
+    2
+  ],
+  "activation_bits": 4,
+  "max_samples": 1,
+  "max_prompt_tokens": 256,
+  "max_new_tokens": 2,
+  "initial_cache_policy": "tail",
+  "output_dir": "./comparison_experiments/results/smoke_20260518_033254_23472/quantized_activation",
+  "seed": 2026,
+  "dtype": "bf16",
+  "no_quantize_expert_input": false,
+  "wrapped_layers": 48,
+  "method": "moe_speq_fake_quantized_activation_draft",
+  "primary_metric": "prefix_acceptance_rate",
+  "expert_metrics": [
+    "expert_hard_match_rate",
+    "expert_soft_match_rate",
+    "target_cache_hit_rate"
+  ]
+}

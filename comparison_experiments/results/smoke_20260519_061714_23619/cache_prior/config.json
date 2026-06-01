@@ -1,0 +1,23 @@
+{
+  "model_path": "/data2/group_谈海生/lagin/models/Qwen3-30B-A3B-Base",
+  "data_file": "/data2/group_谈海生/lagin/data/mtbench101/mtbench101.jsonl",
+  "cache_rates": [
+    0.5
+  ],
+  "draft_lengths": [
+    1,
+    2
+  ],
+  "lambda_val": 0.5,
+  "top_j": 2,
+  "max_samples": 1,
+  "max_prompt_tokens": 256,
+  "max_new_tokens": 2,
+  "initial_cache_policy": "tail",
+  "output_dir": "./comparison_experiments/results/smoke_20260519_061714_23619/cache_prior",
+  "seed": 2026,
+  "dtype": "bf16",
+  "wrapped_layers": 48,
+  "primary_metric": "prefix_acceptance_rate",
+  "secondary_metric": "position_match_rate"
+}
